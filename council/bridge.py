@@ -1,11 +1,13 @@
-"""Tmux bridge for spawning and controlling CLI agents."""
+"""Tmux bridge for spawning and controlling CLI agents with streaming output."""
 
 from __future__ import annotations
 
 import subprocess
 import time
 import re
+import os
 from dataclasses import dataclass
+from typing import Callable
 
 from council.config import AgentConfig
 
@@ -21,7 +23,7 @@ class AgentResponse:
 
 
 class TmuxBridge:
-    """Controls CLI agents via tmux sessions for parallel execution."""
+    """Controls CLI agents via subprocess/tmux with streaming support."""
 
     def __init__(self, session_prefix: str = "council"):
         self.session_prefix = session_prefix
@@ -33,40 +35,60 @@ class TmuxBridge:
         except (FileNotFoundError, subprocess.CalledProcessError):
             raise RuntimeError("tmux is required but not found. Install with: brew install tmux")
 
-    def _session_name(self, agent_name: str, run_id: str) -> str:
-        return f"{self.session_prefix}-{run_id}-{agent_name}"
+    def query_agent(
+        self,
+        agent: AgentConfig,
+        prompt: str,
+        run_id: str,
+        on_chunk: Callable[[str], None] | None = None,
+    ) -> AgentResponse:
+        """Send a prompt to a CLI agent with streaming output.
 
-    def query_agent(self, agent: AgentConfig, prompt: str, run_id: str) -> AgentResponse:
-        """Send a prompt to a CLI agent and capture its response.
-
-        Uses the CLI's non-interactive/pipe mode directly via subprocess,
-        which is simpler and more reliable than tmux send-keys for
-        single-shot queries.
+        Args:
+            agent: Agent configuration
+            prompt: The prompt to send
+            run_id: Unique run identifier
+            on_chunk: Callback for each chunk of streaming output
         """
         start = time.time()
         try:
             cmd = [agent.command] + agent.args
-            result = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
-                input=prompt,
-                capture_output=True,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=agent.timeout,
+                bufsize=1,  # Line buffered
             )
-            elapsed = time.time() - start
-            output = result.stdout.strip()
 
-            if result.returncode != 0 and not output:
+            # Send prompt and close stdin
+            proc.stdin.write(prompt)
+            proc.stdin.close()
+
+            # Stream stdout line by line
+            chunks = []
+            for line in proc.stdout:
+                chunks.append(line)
+                if on_chunk:
+                    on_chunk(line)
+
+            proc.wait(timeout=agent.timeout)
+            elapsed = time.time() - start
+
+            output = "".join(chunks).strip()
+            stderr = proc.stderr.read().strip()
+
+            if proc.returncode != 0 and not output:
                 return AgentResponse(
                     agent_name=agent.name,
                     display_name=agent.display_name,
                     response="",
                     elapsed_seconds=elapsed,
                     success=False,
-                    error=result.stderr.strip() or f"Exit code {result.returncode}",
+                    error=stderr or f"Exit code {proc.returncode}",
                 )
 
-            # Clean ANSI escape codes and CLI metadata from output
             output = _strip_ansi(output)
             output = _strip_cli_metadata(output, agent.name)
 
@@ -76,10 +98,11 @@ class TmuxBridge:
                 response=output,
                 elapsed_seconds=elapsed,
                 success=bool(output),
-                error=None if output else "Empty response after cleaning",
+                error=None if output else "Empty response",
             )
 
         except subprocess.TimeoutExpired:
+            proc.kill()
             elapsed = time.time() - start
             return AgentResponse(
                 agent_name=agent.name,
@@ -111,28 +134,37 @@ class TmuxBridge:
             )
 
     def query_agents_parallel_tmux(
-        self, agents: list[AgentConfig], prompt: str, run_id: str
+        self,
+        agents: list[AgentConfig],
+        prompt: str,
+        run_id: str,
+        on_chunk: Callable[[str, str], None] | None = None,
     ) -> list[AgentResponse]:
         """Run multiple agents in parallel using tmux sessions.
 
-        Spawns each agent in a separate tmux session, waits for all to
-        complete, then collects results.
+        Args:
+            agents: List of agent configs
+            prompt: The prompt to send
+            run_id: Unique run identifier
+            on_chunk: Callback(agent_name, new_content) for live updates
         """
         sessions = {}
 
-        # Launch all agents in parallel tmux sessions
         for agent in agents:
-            session = self._session_name(agent.name, run_id)
-            cmd_parts = [agent.command] + agent.args
-            # Write prompt to a temp file to avoid shell escaping issues
+            session = f"{self.session_prefix}-{run_id}-{agent.name}"
             prompt_file = f"/tmp/council-{run_id}-{agent.name}-prompt.txt"
+            output_file = f"/tmp/council-{run_id}-{agent.name}-out.txt"
+
             with open(prompt_file, "w") as f:
                 f.write(prompt)
 
-            # Build the tmux command that pipes the prompt into the CLI
-            shell_cmd = f"cat {prompt_file} | {' '.join(cmd_parts)} > /tmp/council-{run_id}-{agent.name}-out.txt 2>&1; echo '___COUNCIL_DONE___' >> /tmp/council-{run_id}-{agent.name}-out.txt"
+            cmd_parts = [agent.command] + agent.args
+            shell_cmd = (
+                f"cat {prompt_file} | {' '.join(cmd_parts)} "
+                f"> {output_file} 2>&1; "
+                f"echo '___COUNCIL_DONE___' >> {output_file}"
+            )
 
-            # Create detached tmux session
             subprocess.run(
                 ["tmux", "new-session", "-d", "-s", session, shell_cmd],
                 capture_output=True,
@@ -141,40 +173,48 @@ class TmuxBridge:
                 "session": session,
                 "agent": agent,
                 "start": time.time(),
-                "output_file": f"/tmp/council-{run_id}-{agent.name}-out.txt",
+                "output_file": output_file,
                 "prompt_file": prompt_file,
+                "last_size": 0,
             }
 
-        # Poll for completion
         results = []
         pending = dict(sessions)
+
         while pending:
             for name, info in list(pending.items()):
                 agent = info["agent"]
                 elapsed = time.time() - info["start"]
 
-                # Check if tmux session still exists
-                check = subprocess.run(
-                    ["tmux", "has-session", "-t", info["session"]],
-                    capture_output=True,
-                )
-                session_done = check.returncode != 0
-
-                # Also check for done marker
+                # Stream new content
                 try:
                     with open(info["output_file"]) as f:
                         content = f.read()
-                    if "___COUNCIL_DONE___" in content:
-                        session_done = True
+                    if len(content) > info["last_size"] and on_chunk:
+                        new_content = content[info["last_size"]:]
+                        clean = new_content.replace("___COUNCIL_DONE___", "")
+                        if clean.strip():
+                            on_chunk(name, clean)
+                        info["last_size"] = len(content)
                 except FileNotFoundError:
                     content = ""
 
-                if session_done:
+                # Check completion
+                done = "___COUNCIL_DONE___" in content
+                if not done:
+                    check = subprocess.run(
+                        ["tmux", "has-session", "-t", info["session"]],
+                        capture_output=True,
+                    )
+                    done = check.returncode != 0
+
+                if done:
                     try:
                         with open(info["output_file"]) as f:
                             content = f.read()
                         content = content.replace("___COUNCIL_DONE___", "").strip()
                         content = _strip_ansi(content)
+                        content = _strip_cli_metadata(content, name)
                         results.append(AgentResponse(
                             agent_name=name,
                             display_name=agent.display_name,
@@ -192,7 +232,6 @@ class TmuxBridge:
                             success=False,
                             error=str(e),
                         ))
-                    # Cleanup
                     subprocess.run(["tmux", "kill-session", "-t", info["session"]], capture_output=True)
                     _cleanup_file(info["output_file"])
                     _cleanup_file(info["prompt_file"])
@@ -213,51 +252,30 @@ class TmuxBridge:
                     del pending[name]
 
             if pending:
-                time.sleep(1)
+                time.sleep(0.5)
 
         return results
 
 
 def _strip_ansi(text: str) -> str:
-    """Remove ANSI escape sequences from text."""
     return re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", text)
 
 
 def _strip_cli_metadata(text: str, agent_name: str) -> str:
-    """Strip CLI-specific metadata headers from output.
-
-    Codex CLI prepends metadata like:
-        Reading additional input from stdin...
-        OpenAI Codex v0.118.0 (research preview)
-        --------
-        workdir: ...
-        model: ...
-        ...
-        --------
-        user
-        <prompt>
-        codex
-        <actual response>
-        tokens used
-        123
-    """
+    """Strip CLI-specific metadata headers from output."""
     if agent_name == "codex":
-        # Find the response after the "codex\n" marker
         lines = text.split("\n")
-        # Find the last "codex" marker line (the response follows it)
         codex_idx = None
         for i, line in enumerate(lines):
             if line.strip() == "codex":
                 codex_idx = i
         if codex_idx is not None:
-            # Response is between "codex" and "tokens used"
             response_lines = []
             for line in lines[codex_idx + 1:]:
                 if line.strip() == "tokens used":
                     break
                 response_lines.append(line)
             return "\n".join(response_lines).strip()
-        # Fallback: try to strip the header block
         if "--------" in text:
             parts = text.split("--------")
             if len(parts) >= 3:
@@ -266,8 +284,6 @@ def _strip_cli_metadata(text: str, agent_name: str) -> str:
 
 
 def _cleanup_file(path: str):
-    """Remove a temporary file if it exists."""
-    import os
     try:
         os.unlink(path)
     except OSError:

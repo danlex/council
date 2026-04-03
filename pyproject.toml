@@ -5,14 +5,12 @@ description = "Council of LLM CLIs — query multiple AI coding agents and synth
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "typer>=0.15",
     "rich>=13.0",
     "pyyaml>=6.0",
-    "libtmux>=0.40",
 ]
 
 [project.scripts]
-council = "council.cli:app"
+council = "council.cli:run"
 
 [build-system]
 requires = ["setuptools>=68"]

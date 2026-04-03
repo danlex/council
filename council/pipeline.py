@@ -1,4 +1,4 @@
-"""3-stage council pipeline: Respond -> Review -> Synthesize."""
+"""3-stage council pipeline with streaming output and shared memory."""
 
 from __future__ import annotations
 
@@ -7,10 +7,27 @@ from dataclasses import dataclass, field
 
 from council.bridge import TmuxBridge, AgentResponse
 from council.config import CouncilConfig
+from council.memory import (
+    init_memory,
+    load_memory,
+    save_learning,
+    EXTRACT_LEARNINGS_PROMPT,
+)
 from council.prompts import (
     build_stage1_prompt,
     build_stage2_prompt,
     build_stage3_prompt,
+)
+from council.display import (
+    console,
+    print_stage_header,
+    print_agent_result,
+    print_stage_summary,
+    print_final_result,
+    print_memory_saved,
+    print_memory_status,
+    print_stats,
+    StreamingDisplay,
 )
 
 
@@ -27,7 +44,6 @@ class CouncilResult:
     def final_answer(self) -> str:
         if self.stage3_synthesis and self.stage3_synthesis.success:
             return self.stage3_synthesis.response
-        # Fallback: return best individual response
         successful = [r for r in self.stage1_responses if r.success]
         if successful:
             return successful[0].response
@@ -35,7 +51,7 @@ class CouncilResult:
 
 
 class CouncilPipeline:
-    """Orchestrates the 3-stage council deliberation."""
+    """Orchestrates the 3-stage council deliberation with live feedback."""
 
     def __init__(self, config: CouncilConfig, bridge: TmuxBridge):
         self.config = config
@@ -44,107 +60,193 @@ class CouncilPipeline:
     def run(
         self,
         question: str,
-        on_stage_start=None,
-        on_agent_done=None,
-        on_stage_done=None,
+        verbose: bool = False,
         use_tmux_parallel: bool = False,
     ) -> CouncilResult:
         run_id = uuid.uuid4().hex[:8]
         result = CouncilResult(question=question, run_id=run_id)
         active_agents = self.config.active_agents
 
-        if len(active_agents) == 0:
+        if not active_agents:
             result.errors.append("No active agents configured.")
+            console.print("[bold red]No active agents configured.[/bold red]")
             return result
 
-        # --- STAGE 1: Independent Responses ---
-        if on_stage_start:
-            on_stage_start(1, "Independent Responses", active_agents)
-
+        # Load shared memory
+        init_memory()
+        memory = load_memory()
         soul = self.config.soul
-        stage1_prompt = build_stage1_prompt(question, soul=soul)
+        memory_count = len(memory.split("---")) - 1 if memory else 0
+        print_memory_status(max(0, memory_count))
+
+        # ═════════════════��═════════════════════════
+        # STAGE 1: Independent Responses
+        # ═══════════════════════════════════════════
+        print_stage_header(1, active_agents)
+        stage1_prompt = build_stage1_prompt(brief=question, soul=soul, memory=memory)
 
         if use_tmux_parallel and len(active_agents) > 1:
+            stream = StreamingDisplay()
+            stream.start(active_agents)
+
+            def on_parallel_chunk(agent_name, chunk):
+                stream.update_chunk(agent_name, chunk)
+
             responses = self.bridge.query_agents_parallel_tmux(
-                active_agents, stage1_prompt, run_id
+                active_agents, stage1_prompt, run_id,
+                on_chunk=on_parallel_chunk,
             )
+            for r in responses:
+                stream.mark_done(r.agent_name, r.elapsed_seconds, r.success)
+
+            stream.stop()
         else:
             responses = []
             for agent in active_agents:
-                resp = self.bridge.query_agent(agent, stage1_prompt, run_id)
+                stream = StreamingDisplay()
+                stream.start([agent])
+
+                def on_chunk(chunk, _name=agent.name):
+                    stream.update_chunk(_name, chunk)
+
+                resp = self.bridge.query_agent(agent, stage1_prompt, run_id, on_chunk=on_chunk)
+                stream.mark_done(agent.name, resp.elapsed_seconds, resp.success)
+                stream.stop()
+
                 responses.append(resp)
-                if on_agent_done:
-                    on_agent_done(1, resp)
+                print_agent_result(resp)
 
         result.stage1_responses = responses
         successful = [r for r in responses if r.success]
+        print_stage_summary(1, responses)
 
-        if on_stage_done:
-            on_stage_done(1, responses)
+        if verbose:
+            for r in successful:
+                print_agent_result(r, show_content=True)
 
         if len(successful) < 2:
-            # Need at least 2 responses for peer review to be meaningful
             if len(successful) == 1:
-                # Skip review, just return the single response
+                console.print("  [yellow]Only 1 agent succeeded — skipping peer review[/yellow]")
                 result.stage3_synthesis = successful[0]
+                self._save_learnings(result)
+                answer = print_final_result(successful[0])
                 return result
             result.errors.append("All agents failed in Stage 1.")
+            console.print("  [bold red]All agents failed.[/bold red]")
             return result
 
-        # --- STAGE 2: Anonymized Peer Review ---
-        if on_stage_start:
-            on_stage_start(2, "Anonymized Peer Review", active_agents)
+        # ═══════════════════════════════════════════
+        # STAGE 2: Anonymized Peer Review
+        # ═══════════════════════════════════════════
+        review_agents = [a for a in active_agents if any(r.agent_name == a.name for r in successful)]
+        print_stage_header(2, review_agents)
 
         response_dicts = [
             {"agent_id": r.agent_name, "agent_name": r.display_name, "response": r.response}
             for r in successful
         ]
-
         stage2_prompt = build_stage2_prompt(
-            question=question,
+            brief=question,
             responses=response_dicts,
             rubric=self.config.rubric,
         )
 
-        # Each active agent reviews all responses
         reviews = []
-        for agent in active_agents:
-            if not any(r.agent_name == agent.name and r.success for r in successful):
-                continue  # Skip agents that failed in stage 1
-            rev = self.bridge.query_agent(agent, stage2_prompt, run_id)
+        for agent in review_agents:
+            stream = StreamingDisplay()
+            stream.start([agent])
+
+            def on_chunk(chunk, _name=agent.name):
+                stream.update_chunk(_name, chunk)
+
+            rev = self.bridge.query_agent(agent, stage2_prompt, run_id, on_chunk=on_chunk)
+            stream.mark_done(agent.name, rev.elapsed_seconds, rev.success)
+            stream.stop()
+
             reviews.append(rev)
-            if on_agent_done:
-                on_agent_done(2, rev)
+            print_agent_result(rev)
 
         result.stage2_reviews = reviews
         successful_reviews = [r for r in reviews if r.success]
+        print_stage_summary(2, reviews)
 
-        if on_stage_done:
-            on_stage_done(2, reviews)
+        if verbose:
+            for r in successful_reviews:
+                print_agent_result(r, show_content=True)
 
-        # --- STAGE 3: Chairman Synthesis ---
-        if on_stage_start:
-            on_stage_start(3, "Chairman Synthesis", [self.config.chairman_agent])
+        # ═══════════════════════════════════════════
+        # STAGE 3: Chairman Synthesis
+        # ═══════════════════════════════════════════
+        chairman = self.config.chairman_agent
+        print_stage_header(3, [chairman])
 
         review_dicts = [
             {"agent_id": r.agent_name, "agent_name": r.display_name, "response": r.response}
             for r in successful_reviews
         ]
-
         stage3_prompt = build_stage3_prompt(
-            question=question,
+            brief=question,
             responses=response_dicts,
             reviews=review_dicts,
             preserve_dissent=self.config.preserve_dissent,
         )
 
-        chairman = self.config.chairman_agent
-        synthesis = self.bridge.query_agent(chairman, stage3_prompt, run_id)
+        stream = StreamingDisplay()
+        stream.start([chairman])
+
+        def on_chunk(chunk):
+            stream.update_chunk(chairman.name, chunk)
+
+        synthesis = self.bridge.query_agent(chairman, stage3_prompt, run_id, on_chunk=on_chunk)
+        stream.mark_done(chairman.name, synthesis.elapsed_seconds, synthesis.success)
+        stream.stop()
+
         result.stage3_synthesis = synthesis
 
-        if on_agent_done:
-            on_agent_done(3, synthesis)
-        if on_stage_done:
-            on_stage_done(3, [synthesis])
+        # Display final answer
+        answer = print_final_result(synthesis, fallback=result.final_answer)
+
+        # Stats
+        print_stats(result.stage1_responses, result.stage2_reviews, result.stage3_synthesis)
+
+        # Save learnings to memory
+        self._save_learnings(result)
 
         return result
+
+    def _save_learnings(self, result: CouncilResult):
+        """Extract and save learnings from this session to shared memory."""
+        if not result.stage3_synthesis or not result.stage3_synthesis.success:
+            return
+
+        synthesis = result.stage3_synthesis.response
+
+        # Extract disagreements section if present
+        disagreements = ""
+        if "## Points of Dissent" in synthesis:
+            parts = synthesis.split("## Points of Dissent")
+            if len(parts) > 1:
+                rest = parts[1]
+                # Get until next ## or end
+                next_section = rest.find("\n## ")
+                disagreements = rest[:next_section].strip() if next_section > 0 else rest.strip()
+
+        # Use the chairman to extract learnings
+        learning_prompt = EXTRACT_LEARNINGS_PROMPT.format(
+            question=result.question,
+            synthesis=synthesis[:2000],  # Truncate to avoid huge prompts
+            disagreements=disagreements[:500] if disagreements else "None identified",
+        )
+
+        chairman = self.config.chairman_agent
+        learning_resp = self.bridge.query_agent(
+            chairman, learning_prompt, result.run_id + "-learn"
+        )
+
+        if learning_resp.success and learning_resp.response:
+            path = save_learning(
+                learning=learning_resp.response,
+                question=result.question,
+                session_id=result.run_id,
+            )
+            print_memory_saved(path)
