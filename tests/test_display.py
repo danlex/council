@@ -88,3 +88,31 @@ class TestStreamingDisplay:
         sd = StreamingDisplay()
         sd.stop()  # Should not crash
         assert sd.live is None
+
+    def test_concurrent_updates_no_crash(self):
+        """Verify thread safety — concurrent chunk updates don't crash."""
+        import threading
+        sd = StreamingDisplay()
+        sd.agent_buffers = {"a": "", "b": ""}
+        sd.agent_status = {"a": "streaming", "b": "streaming"}
+        sd.agent_times = {"a": 0, "b": 0}
+        sd.agent_colors = {"a": "white", "b": "white"}
+        sd.agent_display_names = {"a": "A", "b": "B"}
+        # Don't start Live (would need terminal), just test buffer safety
+        errors = []
+        def writer(name, count):
+            try:
+                for i in range(count):
+                    sd.update_chunk(name, f"chunk{i} ")
+            except Exception as e:
+                errors.append(e)
+
+        t1 = threading.Thread(target=writer, args=("a", 100))
+        t2 = threading.Thread(target=writer, args=("b", 100))
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+        assert len(errors) == 0
+        assert sd.agent_buffers["a"].count("chunk") == 100
+        assert sd.agent_buffers["b"].count("chunk") == 100

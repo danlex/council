@@ -18,7 +18,7 @@ Keep your responses concise. Do not start working on the problem yet — just cl
 
 # ─── Stage 1: Independent Response ──────────────────────────────────────
 
-STAGE1_RESPONSE = """You are one member of a council of AI experts. You have access to tools, files, and the web. Use them.
+STAGE1_RESPONSE_CLI = """You are one member of a council of AI experts. You have access to tools, files, and the web. Use them.
 
 {soul_section}
 
@@ -34,10 +34,30 @@ STAGE1_RESPONSE = """You are one member of a council of AI experts. You have acc
 - Do not hedge excessively — give your genuine expert assessment.
 - If you disagree with common wisdom, say so and explain why."""
 
+STAGE1_RESPONSE_API = """You are one member of a council of AI experts.
+
+{soul_section}
+
+{memory_section}
+
+## Your Brief
+{brief}
+
+## Instructions
+- Provide your best, most thorough answer.
+- Reason carefully from your knowledge. Flag claims you cannot verify as [unverified].
+- Be specific, cite evidence where you are confident, flag uncertainty with confidence levels.
+- Do not hedge excessively — give your genuine expert assessment.
+- If you disagree with common wisdom, say so and explain why."""
+
 
 # ─── Stage 2: Anonymized Peer Review ────────────────────────────────────
 
 STAGE2_REVIEW = """You are a peer reviewer in a council of AI experts. Below are anonymized responses from other council members.
+
+{soul_section}
+
+{memory_section}
 
 Your task:
 1. Rate each response on these criteria (1-10 scale):
@@ -157,8 +177,9 @@ def _section(label: str, content: str) -> str:
     return ""
 
 
-def build_stage1_prompt(brief: str, soul: str = "", memory: str = "") -> str:
-    return STAGE1_RESPONSE.format(
+def build_stage1_prompt(brief: str, soul: str = "", memory: str = "", agent_type: str = "cli") -> str:
+    template = STAGE1_RESPONSE_CLI if agent_type == "cli" else STAGE1_RESPONSE_API
+    return template.format(
         brief=brief,
         soul_section=_section("Council Soul", soul),
         memory_section=_section("Shared Memory", memory),
@@ -169,9 +190,13 @@ def build_stage2_prompt(
     brief: str,
     responses: list[dict],
     rubric: list[str],
+    soul: str = "",
+    memory: str = "",
 ) -> str:
     return STAGE2_REVIEW.format(
         brief=brief,
+        soul_section=_section("Council Soul", soul),
+        memory_section=_section("Shared Memory", memory),
         rubric_items=format_rubric_items(rubric),
         anonymized_responses=format_anonymized_responses(responses),
         rating_template=format_rating_template(len(responses), rubric),

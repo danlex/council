@@ -75,9 +75,15 @@ class TestBuildStage1:
         assert "Council Soul" not in result
         assert "Shared Memory" not in result
 
-    def test_instructions_present(self):
-        result = build_stage1_prompt("test")
+    def test_cli_agent_gets_tool_instructions(self):
+        result = build_stage1_prompt("test", agent_type="cli")
         assert "USE TOOLS" in result
+        assert "search the web, read files, run code" in result
+
+    def test_api_agent_gets_no_tool_instructions(self):
+        result = build_stage1_prompt("test", agent_type="openrouter")
+        assert "USE TOOLS" not in result
+        assert "[unverified]" in result
         assert "confidence levels" in result
 
 
@@ -107,6 +113,15 @@ class TestBuildStage2:
     def test_includes_rating_template(self):
         result = build_stage2_prompt("test", self._responses(), ["accuracy"])
         assert "?/10" in result
+
+    def test_includes_soul(self):
+        result = build_stage2_prompt("test", self._responses(), ["accuracy"], soul="Be critical")
+        assert "Be critical" in result
+        assert "Council Soul" in result
+
+    def test_includes_memory(self):
+        result = build_stage2_prompt("test", self._responses(), ["accuracy"], memory="Prior: X is wrong")
+        assert "X is wrong" in result
 
 
 class TestBuildStage3:

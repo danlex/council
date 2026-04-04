@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+
 from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
@@ -47,16 +49,6 @@ def print_banner():
     console.print()
 
 
-def print_question(question: str):
-    console.print(Panel(
-        question,
-        title="[bold]Question[/bold]",
-        border_style="bright_white",
-        padding=(1, 2),
-    ))
-    console.print()
-
-
 def print_memory_status(memory_count: int):
     if memory_count > 0:
         console.print(f"  [dim]Shared memory: {memory_count} entries loaded[/dim]")
@@ -77,7 +69,7 @@ def print_stage_header(stage: int, agents: list[AgentConfig]):
 
 
 class StreamingDisplay:
-    """Live-updating display for streaming agent responses."""
+    """Thread-safe live-updating display for streaming agent responses."""
 
     def __init__(self):
         self.agent_buffers: dict[str, str] = {}
@@ -86,37 +78,42 @@ class StreamingDisplay:
         self.agent_colors: dict[str, str] = {}
         self.agent_display_names: dict[str, str] = {}
         self.live: Live | None = None
+        self._lock = threading.Lock()
 
     def start(self, agents: list[AgentConfig]):
         """Begin live display for a set of agents."""
-        for a in agents:
-            self.agent_buffers[a.name] = ""
-            self.agent_status[a.name] = "streaming"
-            self.agent_times[a.name] = 0
-            self.agent_colors[a.name] = get_agent_color(a.name)
-            self.agent_display_names[a.name] = a.display_name
-        self.live = Live(self._render(), console=console, refresh_per_second=4)
-        self.live.start()
+        with self._lock:
+            for a in agents:
+                self.agent_buffers[a.name] = ""
+                self.agent_status[a.name] = "streaming"
+                self.agent_times[a.name] = 0
+                self.agent_colors[a.name] = get_agent_color(a.name)
+                self.agent_display_names[a.name] = a.display_name
+            self.live = Live(self._render(), console=console, refresh_per_second=4)
+            self.live.start()
 
     def update_chunk(self, agent_name: str, chunk: str):
-        """Append new content from an agent."""
-        if agent_name in self.agent_buffers:
-            self.agent_buffers[agent_name] += chunk
+        """Append new content from an agent. Thread-safe."""
+        with self._lock:
+            if agent_name in self.agent_buffers:
+                self.agent_buffers[agent_name] += chunk
+                if self.live:
+                    self.live.update(self._render())
+
+    def mark_done(self, agent_name: str, elapsed: float, success: bool = True):
+        """Mark an agent as completed. Thread-safe."""
+        with self._lock:
+            self.agent_status[agent_name] = "done" if success else "failed"
+            self.agent_times[agent_name] = elapsed
             if self.live:
                 self.live.update(self._render())
 
-    def mark_done(self, agent_name: str, elapsed: float, success: bool = True):
-        """Mark an agent as completed."""
-        self.agent_status[agent_name] = "done" if success else "failed"
-        self.agent_times[agent_name] = elapsed
-        if self.live:
-            self.live.update(self._render())
-
     def stop(self):
         """Stop the live display."""
-        if self.live:
-            self.live.stop()
-            self.live = None
+        with self._lock:
+            if self.live:
+                self.live.stop()
+                self.live = None
 
     def _render(self):
         """Render the current state of all agents."""

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 
 from council.bridge import Bridge, AgentResponse
 from council.config import CouncilConfig
@@ -15,7 +15,6 @@ from council.memory import (
     load_memory,
     list_memories,
     save_learning,
-    save_memory,
     EXTRACT_LEARNINGS_PROMPT,
     MEMORY_DIR,
 )
@@ -91,16 +90,28 @@ class CouncilPipeline:
             # STAGE 1: Independent Responses (parallel)
             # ═══════════════════════════════════════════
             print_stage_header(1, active_agents)
-            stage1_prompt = build_stage1_prompt(brief=question, soul=soul, memory=memory)
+
+            # Build per-agent prompts (CLI agents get tool instructions, API agents don't)
+            stage1_prompts = {
+                a.name: build_stage1_prompt(brief=question, soul=soul, memory=memory, agent_type=a.type)
+                for a in active_agents
+            }
 
             if use_parallel and len(active_agents) > 1:
                 stream = StreamingDisplay()
                 stream.start(active_agents)
 
-                responses = self.bridge.query_agents_parallel(
-                    active_agents, stage1_prompt, run_id,
-                    on_chunk=lambda name, chunk: stream.update_chunk(name, chunk),
-                )
+                responses = []
+                with concurrent.futures.ThreadPoolExecutor(max_workers=len(active_agents)) as pool:
+                    def run_stage1(agent):
+                        return self.bridge.query_agent(
+                            agent, stage1_prompts[agent.name], run_id,
+                            on_chunk=lambda chunk, _n=agent.name: stream.update_chunk(_n, chunk),
+                        )
+                    futures = {pool.submit(run_stage1, a): a for a in active_agents}
+                    for future in concurrent.futures.as_completed(futures):
+                        responses.append(future.result())
+
                 for r in responses:
                     stream.mark_done(r.agent_name, r.elapsed_seconds, r.success)
                 stream.stop()
@@ -111,7 +122,7 @@ class CouncilPipeline:
                     stream = StreamingDisplay()
                     stream.start([agent])
                     resp = self.bridge.query_agent(
-                        agent, stage1_prompt, run_id,
+                        agent, stage1_prompts[agent.name], run_id,
                         on_chunk=lambda chunk, _n=agent.name: stream.update_chunk(_n, chunk),
                     )
                     stream.mark_done(agent.name, resp.elapsed_seconds, resp.success)
@@ -161,6 +172,8 @@ class CouncilPipeline:
                     brief=question,
                     responses=other_responses,
                     rubric=self.config.rubric,
+                    soul=soul,
+                    memory=memory,
                 )
                 review_tasks.append((agent, prompt))
 
@@ -169,7 +182,6 @@ class CouncilPipeline:
                 stream = StreamingDisplay()
                 stream.start([t[0] for t in review_tasks])
 
-                import concurrent.futures
                 reviews = []
                 with concurrent.futures.ThreadPoolExecutor(max_workers=len(review_tasks)) as pool:
                     def run_review(agent, prompt):
