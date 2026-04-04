@@ -16,21 +16,6 @@ Keep your responses concise. Do not start working on the problem yet — just cl
 
 {memory_section}"""
 
-CLARIFY_BRIEF = """Based on our conversation, here is the brief I'll give to the council:
-
----
-**Question/Task:** {question}
-
-**Scope:** {scope}
-
-**Key Constraints:** {constraints}
-
-**Expected Output:** {expected}
----
-
-Does this look right? Say "go" to start the council, or clarify further."""
-
-
 # ─── Stage 1: Independent Response ──────────────────────────────────────
 
 STAGE1_RESPONSE = """You are one member of a council of AI experts. You have access to tools, files, and the web. Use them.

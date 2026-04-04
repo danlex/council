@@ -182,29 +182,44 @@ Based on the literature review, we adopt five design principles:
               └──────────────────┘
 ```
 
-### 4.3 Tmux Bridge Architecture
+### 4.3 Interactive Clarification Phase
+
+Before the council deliberates, a **clarification phase** ensures the question is well-defined. The chairman agent engages the user in a brief conversation to:
+
+1. Ask 1-3 focused clarifying questions
+2. Identify the scope and constraints
+3. Produce a clear **brief** that all council members work from
+
+This prevents the common failure mode where different agents interpret an ambiguous question differently, leading to incoherent debate. The user can continue refining or say "go" to start the council.
+
+### 4.4 Tmux Bridge Architecture
 
 Rather than using API clients, Council uses subprocess/tmux to interface with CLI agents:
 
-```python
-# Sequential: subprocess with stdin pipe
-subprocess.run(
-    ["claude", "-p", "--max-turns", "10", "--output-format", "text"],
-    input=prompt, capture_output=True, text=True, timeout=300,
-)
+- **Sequential mode**: `subprocess.Popen()` with stdin pipe and streaming stdout for line-by-line live output
+- **Parallel mode**: tmux sessions for true concurrent execution across agents
+- **Prompt injection**: Agents that accept prompts as arguments (Gemini) use a `{prompt}` placeholder; others receive prompts via stdin
 
-# Parallel: tmux sessions
-tmux new-session -d -s council-{run_id}-{agent}
-    "cat prompt.txt | claude -p ... > output.txt 2>&1"
+This approach preserves each CLI's full tool-use capabilities (file I/O, shell, web search), handles heterogeneous CLI interfaces, and strips CLI-specific metadata from outputs (Codex headers, ANSI codes).
+
+### 4.5 Persistent Shared Memory
+
+The council maintains a file-based memory system (`memory/`) that persists across sessions:
+
+```
+memory/
+├── MEMORY.md           # Index
+├── learnings/          # Key insights extracted after each session
+├── corrections/        # User feedback and corrections
+├── context/            # Domain knowledge accumulated
+└── preferences/        # User preferences
 ```
 
-This approach:
-- Preserves each CLI's full tool-use capabilities (file I/O, shell, web search)
-- Allows true parallel execution via tmux
-- Handles heterogeneous CLI interfaces (different flag syntax per tool)
-- Strips CLI-specific metadata from outputs (Codex headers, ANSI codes)
+After each council session, the chairman extracts key learnings from the synthesis and saves them. User corrections are captured post-session. All memories are loaded into every agent's prompt in subsequent sessions, creating a feedback loop where the council improves over time.
 
-### 4.4 SOUL.md: Shared Anti-Bias Protocol
+This is inspired by Claude Code's own memory architecture but extended to be shared across multiple agents from different providers.
+
+### 4.6 SOUL.md: Shared Anti-Bias Protocol
 
 All agents receive the same SOUL.md preamble, which establishes:
 
@@ -292,15 +307,15 @@ The theoretical upper bound of 83% improvement over the best single model (Valle
 
 4. **Adding more agents:** GLM CLI, MiniMax CLI, DeepSeek CLI, Aider, Cline — more model diversity increases debiasing effectiveness.
 
-5. **Persistent memory:** Extend SOUL.md into a shared memory system that accumulates knowledge across queries, building a council-level understanding over time.
-
-6. **Evaluation framework:** Systematic comparison of council answers vs. single-model answers on benchmarks like TruthfulQA, StrategyQA, and domain-specific factual questions.
+5. **Evaluation framework:** Systematic comparison of council answers vs. single-model answers on benchmarks like TruthfulQA, StrategyQA, and domain-specific factual questions.
 
 ---
 
 ## 9. Conclusion
 
 Council demonstrates that practical multi-LLM deliberation systems can be built today using existing CLI tools. By bridging over full CLI agents rather than raw APIs, we preserve each model's complete capabilities while adding the bias-reduction benefits of structured multi-agent deliberation.
+
+The system's interactive clarification phase, persistent shared memory, and SOUL.md anti-bias protocol go beyond existing implementations like Karpathy's LLM Council, which lacks memory and interactive refinement. The shared memory system creates a feedback loop: the council learns from every session, accumulating domain knowledge and user corrections that improve future deliberations.
 
 The literature is clear: model diversity is the strongest lever for reducing confirmation bias, but naive debate can backfire through echo chambers and sycophancy. Our design addresses these failure modes through anonymization, structured rubric evaluation, mandatory dissent preservation, and a shared anti-bias protocol.
 
@@ -345,35 +360,9 @@ The council of LLMs is not about finding the "average" answer — it is about su
 ## Appendix A: Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/[user]/council.git
+git clone https://github.com/danlex/council.git
 cd council
-
-# Create virtual environment and install
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-
-# Verify CLI agents are available
-which claude codex gemini
-
-# Initialize config
-council config --init
-
-# Ask the council a question
-council ask "What are the trade-offs between microservices and monoliths for a 10-person startup?"
-
-# Quick mode (no peer review, just parallel responses)
-council quick "Explain quantum computing"
-
-# Verbose mode (show individual responses and reviews)
-council ask -v "Is P equal to NP?"
-
-# Specify which agents to use
-council ask --agents claude,codex "Best database for time-series data?"
-
-# Use tmux for true parallel execution
-council ask -p "Compare Rust vs Go for systems programming"
+./c   # Auto-creates venv, installs deps, starts interactive session
 ```
 
 ## Appendix B: Configuration
@@ -396,7 +385,7 @@ agents:
   gemini:
     enabled: true
     command: gemini
-    args: ["-p"]
+    args: ["-p", "{prompt}"]
     display_name: Gemini CLI
     timeout: 300
 

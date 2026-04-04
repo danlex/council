@@ -20,7 +20,8 @@ from datetime import datetime
 from pathlib import Path
 
 
-MEMORY_DIR = Path("memory")
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+MEMORY_DIR = _PROJECT_ROOT / "memory"
 MEMORY_INDEX = MEMORY_DIR / "MEMORY.md"
 SUBDIRS = ["learnings", "corrections", "context", "preferences"]
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
@@ -10,8 +9,6 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from rich.rule import Rule
-from rich.spinner import Spinner
-from rich.columns import Columns
 from rich import box
 
 from council.bridge import AgentResponse

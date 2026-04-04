@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import shlex
 import time
 import re
 import os
@@ -52,19 +53,24 @@ class TmuxBridge:
         """
         start = time.time()
         try:
-            cmd = [agent.command] + agent.args
+            # If any arg contains {prompt}, substitute it; otherwise pipe via stdin
+            args = [a.replace("{prompt}", prompt) if "{prompt}" in a else a for a in agent.args]
+            use_stdin = not any("{prompt}" in a for a in agent.args)
+            cmd = [agent.command] + args
+
             proc = subprocess.Popen(
                 cmd,
-                stdin=subprocess.PIPE,
+                stdin=subprocess.PIPE if use_stdin else None,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,  # Line buffered
             )
 
-            # Send prompt and close stdin
-            proc.stdin.write(prompt)
-            proc.stdin.close()
+            # Send prompt via stdin if needed
+            if use_stdin:
+                proc.stdin.write(prompt)
+                proc.stdin.close()
 
             # Stream stdout line by line
             chunks = []
@@ -102,7 +108,11 @@ class TmuxBridge:
             )
 
         except subprocess.TimeoutExpired:
-            proc.kill()
+            try:
+                proc.kill()
+                proc.wait(timeout=5)
+            except Exception:
+                pass
             elapsed = time.time() - start
             return AgentResponse(
                 agent_name=agent.name,
@@ -158,12 +168,29 @@ class TmuxBridge:
             with open(prompt_file, "w") as f:
                 f.write(prompt)
 
-            cmd_parts = [agent.command] + agent.args
-            shell_cmd = (
-                f"cat {prompt_file} | {' '.join(cmd_parts)} "
-                f"> {output_file} 2>&1; "
-                f"echo '___COUNCIL_DONE___' >> {output_file}"
-            )
+            # Substitute {prompt} placeholder with the prompt file content inline
+            has_placeholder = any("{prompt}" in a for a in agent.args)
+            if has_placeholder:
+                # Read prompt into a variable and substitute into args
+                resolved_args = []
+                for a in agent.args:
+                    if "{prompt}" in a:
+                        resolved_args.append(f'"$(cat {shlex.quote(prompt_file)})"')
+                    else:
+                        resolved_args.append(shlex.quote(a))
+                cmd_parts = [shlex.quote(agent.command)] + resolved_args
+                shell_cmd = (
+                    f"{' '.join(cmd_parts)} "
+                    f"> {shlex.quote(output_file)} 2>&1; "
+                    f"echo '___COUNCIL_DONE___' >> {shlex.quote(output_file)}"
+                )
+            else:
+                cmd_parts = [shlex.quote(agent.command)] + [shlex.quote(a) for a in agent.args]
+                shell_cmd = (
+                    f"cat {shlex.quote(prompt_file)} | {' '.join(cmd_parts)} "
+                    f"> {shlex.quote(output_file)} 2>&1; "
+                    f"echo '___COUNCIL_DONE___' >> {shlex.quote(output_file)}"
+                )
 
             subprocess.run(
                 ["tmux", "new-session", "-d", "-s", session, shell_cmd],

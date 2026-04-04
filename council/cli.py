@@ -2,12 +2,7 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-from rich.console import Console
 from rich.prompt import Prompt
-from rich.text import Text
 from rich.panel import Panel
 from rich.markdown import Markdown
 from rich.rule import Rule

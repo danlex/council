@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -11,8 +10,6 @@ import yaml
 
 CONFIG_DIR = Path.home() / ".config" / "council"
 CONFIG_FILE = CONFIG_DIR / "config.yaml"
-
-SOUL_FILE = Path("SOUL.md")
 
 DEFAULT_CONFIG = {
     "agents": {
@@ -33,7 +30,7 @@ DEFAULT_CONFIG = {
         "gemini": {
             "enabled": True,
             "command": "gemini",
-            "args": ["-p"],
+            "args": ["-p", "{prompt}"],
             "display_name": "Gemini CLI",
             "timeout": 300,
         },
@@ -61,7 +58,7 @@ class AgentConfig:
     command: str
     args: list[str]
     display_name: str
-    timeout: int = 120
+    timeout: int = 300
 
 
 @dataclass
@@ -81,8 +78,9 @@ class CouncilConfig:
 
     @property
     def chairman_agent(self) -> AgentConfig:
-        if self.chairman in self.agents:
+        if self.chairman in self.agents and self.agents[self.chairman].enabled:
             return self.agents[self.chairman]
+        # Fall back to first active agent
         active = self.active_agents
         if active:
             return active[0]
@@ -115,7 +113,7 @@ def load_config(config_path: Path | None = None) -> CouncilConfig:
             command=agent_raw.get("command", name),
             args=agent_raw.get("args", []),
             display_name=agent_raw.get("display_name", name),
-            timeout=agent_raw.get("timeout", 120),
+            timeout=agent_raw.get("timeout", 300),
         )
 
     review = raw.get("review", {})

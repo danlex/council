@@ -10,6 +10,7 @@ from council.config import CouncilConfig
 from council.memory import (
     init_memory,
     load_memory,
+    list_memories,
     save_learning,
     EXTRACT_LEARNINGS_PROMPT,
 )
@@ -76,10 +77,10 @@ class CouncilPipeline:
         init_memory()
         memory = load_memory()
         soul = self.config.soul
-        memory_count = len(memory.split("---")) - 1 if memory else 0
-        print_memory_status(max(0, memory_count))
+        memory_count = len(list_memories())
+        print_memory_status(memory_count)
 
-        # ═════════════════��═════════════════════════
+        # ═══════════════════════════════════════════
         # STAGE 1: Independent Responses
         # ═══════════════════════════════════════════
         print_stage_header(1, active_agents)
