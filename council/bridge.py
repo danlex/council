@@ -1,16 +1,19 @@
-"""Tmux bridge for spawning and controlling CLI agents with streaming output."""
+"""Bridge for CLI agents (subprocess) and API agents (OpenRouter)."""
 
 from __future__ import annotations
 
+import json
 import subprocess
 import shlex
 import time
 import re
 import os
+import urllib.request
+import urllib.error
 from dataclasses import dataclass
 from typing import Callable
 
-from council.config import AgentConfig
+from council.config import AgentConfig, CouncilConfig
 
 
 @dataclass
@@ -23,18 +26,12 @@ class AgentResponse:
     error: str | None = None
 
 
-class TmuxBridge:
-    """Controls CLI agents via subprocess/tmux with streaming support."""
+class Bridge:
+    """Unified bridge for CLI and OpenRouter agents."""
 
-    def __init__(self, session_prefix: str = "council"):
-        self.session_prefix = session_prefix
-        self._verify_tmux()
-
-    def _verify_tmux(self):
-        try:
-            subprocess.run(["tmux", "-V"], capture_output=True, check=True)
-        except (FileNotFoundError, subprocess.CalledProcessError):
-            raise RuntimeError("tmux is required but not found. Install with: brew install tmux")
+    def __init__(self, config: CouncilConfig):
+        self.config = config
+        self.session_prefix = config.session_prefix
 
     def query_agent(
         self,
@@ -43,17 +40,22 @@ class TmuxBridge:
         run_id: str,
         on_chunk: Callable[[str], None] | None = None,
     ) -> AgentResponse:
-        """Send a prompt to a CLI agent with streaming output.
+        if agent.type == "openrouter":
+            return self._query_openrouter(agent, prompt, run_id, on_chunk)
+        else:
+            return self._query_cli(agent, prompt, run_id, on_chunk)
 
-        Args:
-            agent: Agent configuration
-            prompt: The prompt to send
-            run_id: Unique run identifier
-            on_chunk: Callback for each chunk of streaming output
-        """
+    # ─── CLI Agent ──────────────────────────────────────────────────────
+
+    def _query_cli(
+        self,
+        agent: AgentConfig,
+        prompt: str,
+        run_id: str,
+        on_chunk: Callable[[str], None] | None = None,
+    ) -> AgentResponse:
         start = time.time()
         try:
-            # If any arg contains {prompt}, substitute it; otherwise pipe via stdin
             args = [a.replace("{prompt}", prompt) if "{prompt}" in a else a for a in agent.args]
             use_stdin = not any("{prompt}" in a for a in agent.args)
             cmd = [agent.command] + args
@@ -64,15 +66,13 @@ class TmuxBridge:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                bufsize=1,  # Line buffered
+                bufsize=1,
             )
 
-            # Send prompt via stdin if needed
             if use_stdin:
                 proc.stdin.write(prompt)
                 proc.stdin.close()
 
-            # Stream stdout line by line
             chunks = []
             for line in proc.stdout:
                 chunks.append(line)
@@ -143,143 +143,114 @@ class TmuxBridge:
                 error=str(e),
             )
 
-    def query_agents_parallel_tmux(
+    # ─── OpenRouter API ─────────────────────────────────────────────────
+
+    def _query_openrouter(
+        self,
+        agent: AgentConfig,
+        prompt: str,
+        run_id: str,
+        on_chunk: Callable[[str], None] | None = None,
+    ) -> AgentResponse:
+        api_key = self.config.openrouter_api_key
+        if not api_key:
+            return AgentResponse(
+                agent_name=agent.name,
+                display_name=agent.display_name,
+                response="",
+                elapsed_seconds=0,
+                success=False,
+                error="OPENROUTER_API_KEY not set. Add it to .env",
+            )
+
+        start = time.time()
+        try:
+            url = f"{self.config.openrouter_base_url}/chat/completions"
+            payload = json.dumps({
+                "model": agent.model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 16384,
+            }).encode()
+
+            req = urllib.request.Request(
+                url,
+                data=payload,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://github.com/danlex/council",
+                    "X-Title": "Council of LLM CLIs",
+                },
+            )
+
+            with urllib.request.urlopen(req, timeout=agent.timeout) as resp:
+                body = json.loads(resp.read().decode())
+
+            elapsed = time.time() - start
+
+            content = body.get("choices", [{}])[0].get("message", {}).get("content", "")
+            if on_chunk and content:
+                on_chunk(content)
+
+            return AgentResponse(
+                agent_name=agent.name,
+                display_name=agent.display_name,
+                response=content.strip(),
+                elapsed_seconds=elapsed,
+                success=bool(content.strip()),
+                error=None if content.strip() else "Empty response from API",
+            )
+
+        except urllib.error.HTTPError as e:
+            elapsed = time.time() - start
+            error_body = ""
+            try:
+                error_body = e.read().decode()[:200]
+            except Exception:
+                pass
+            return AgentResponse(
+                agent_name=agent.name,
+                display_name=agent.display_name,
+                response="",
+                elapsed_seconds=elapsed,
+                success=False,
+                error=f"HTTP {e.code}: {error_body}",
+            )
+        except Exception as e:
+            elapsed = time.time() - start
+            return AgentResponse(
+                agent_name=agent.name,
+                display_name=agent.display_name,
+                response="",
+                elapsed_seconds=elapsed,
+                success=False,
+                error=str(e),
+            )
+
+    # ─── Parallel (tmux for CLI, threaded for API) ──────────────────────
+
+    def query_agents_parallel(
         self,
         agents: list[AgentConfig],
         prompt: str,
         run_id: str,
         on_chunk: Callable[[str, str], None] | None = None,
     ) -> list[AgentResponse]:
-        """Run multiple agents in parallel using tmux sessions.
-
-        Args:
-            agents: List of agent configs
-            prompt: The prompt to send
-            run_id: Unique run identifier
-            on_chunk: Callback(agent_name, new_content) for live updates
-        """
-        sessions = {}
-
-        for agent in agents:
-            session = f"{self.session_prefix}-{run_id}-{agent.name}"
-            prompt_file = f"/tmp/council-{run_id}-{agent.name}-prompt.txt"
-            output_file = f"/tmp/council-{run_id}-{agent.name}-out.txt"
-
-            with open(prompt_file, "w") as f:
-                f.write(prompt)
-
-            # Substitute {prompt} placeholder with the prompt file content inline
-            has_placeholder = any("{prompt}" in a for a in agent.args)
-            if has_placeholder:
-                # Read prompt into a variable and substitute into args
-                resolved_args = []
-                for a in agent.args:
-                    if "{prompt}" in a:
-                        resolved_args.append(f'"$(cat {shlex.quote(prompt_file)})"')
-                    else:
-                        resolved_args.append(shlex.quote(a))
-                cmd_parts = [shlex.quote(agent.command)] + resolved_args
-                shell_cmd = (
-                    f"{' '.join(cmd_parts)} "
-                    f"> {shlex.quote(output_file)} 2>&1; "
-                    f"echo '___COUNCIL_DONE___' >> {shlex.quote(output_file)}"
-                )
-            else:
-                cmd_parts = [shlex.quote(agent.command)] + [shlex.quote(a) for a in agent.args]
-                shell_cmd = (
-                    f"cat {shlex.quote(prompt_file)} | {' '.join(cmd_parts)} "
-                    f"> {shlex.quote(output_file)} 2>&1; "
-                    f"echo '___COUNCIL_DONE___' >> {shlex.quote(output_file)}"
-                )
-
-            subprocess.run(
-                ["tmux", "new-session", "-d", "-s", session, shell_cmd],
-                capture_output=True,
-            )
-            sessions[agent.name] = {
-                "session": session,
-                "agent": agent,
-                "start": time.time(),
-                "output_file": output_file,
-                "prompt_file": prompt_file,
-                "last_size": 0,
-            }
+        """Run all agents in parallel using threads."""
+        import concurrent.futures
 
         results = []
-        pending = dict(sessions)
 
-        while pending:
-            for name, info in list(pending.items()):
-                agent = info["agent"]
-                elapsed = time.time() - info["start"]
+        def run_agent(agent):
+            def chunk_cb(chunk):
+                if on_chunk:
+                    on_chunk(agent.name, chunk)
+            return self.query_agent(agent, prompt, run_id, on_chunk=chunk_cb)
 
-                # Stream new content
-                try:
-                    with open(info["output_file"]) as f:
-                        content = f.read()
-                    if len(content) > info["last_size"] and on_chunk:
-                        new_content = content[info["last_size"]:]
-                        clean = new_content.replace("___COUNCIL_DONE___", "")
-                        if clean.strip():
-                            on_chunk(name, clean)
-                        info["last_size"] = len(content)
-                except FileNotFoundError:
-                    content = ""
-
-                # Check completion
-                done = "___COUNCIL_DONE___" in content
-                if not done:
-                    check = subprocess.run(
-                        ["tmux", "has-session", "-t", info["session"]],
-                        capture_output=True,
-                    )
-                    done = check.returncode != 0
-
-                if done:
-                    try:
-                        with open(info["output_file"]) as f:
-                            content = f.read()
-                        content = content.replace("___COUNCIL_DONE___", "").strip()
-                        content = _strip_ansi(content)
-                        content = _strip_cli_metadata(content, name)
-                        results.append(AgentResponse(
-                            agent_name=name,
-                            display_name=agent.display_name,
-                            response=content,
-                            elapsed_seconds=elapsed,
-                            success=bool(content),
-                            error=None if content else "Empty response",
-                        ))
-                    except Exception as e:
-                        results.append(AgentResponse(
-                            agent_name=name,
-                            display_name=agent.display_name,
-                            response="",
-                            elapsed_seconds=elapsed,
-                            success=False,
-                            error=str(e),
-                        ))
-                    subprocess.run(["tmux", "kill-session", "-t", info["session"]], capture_output=True)
-                    _cleanup_file(info["output_file"])
-                    _cleanup_file(info["prompt_file"])
-                    del pending[name]
-
-                elif elapsed > agent.timeout:
-                    subprocess.run(["tmux", "kill-session", "-t", info["session"]], capture_output=True)
-                    results.append(AgentResponse(
-                        agent_name=name,
-                        display_name=agent.display_name,
-                        response="",
-                        elapsed_seconds=elapsed,
-                        success=False,
-                        error=f"Timed out after {agent.timeout}s",
-                    ))
-                    _cleanup_file(info["output_file"])
-                    _cleanup_file(info["prompt_file"])
-                    del pending[name]
-
-            if pending:
-                time.sleep(0.5)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(agents)) as pool:
+            futures = {pool.submit(run_agent, a): a for a in agents}
+            for future in concurrent.futures.as_completed(futures):
+                results.append(future.result())
 
         return results
 
@@ -308,10 +279,3 @@ def _strip_cli_metadata(text: str, agent_name: str) -> str:
             if len(parts) >= 3:
                 return parts[-1].strip()
     return text
-
-
-def _cleanup_file(path: str):
-    try:
-        os.unlink(path)
-    except OSError:
-        pass

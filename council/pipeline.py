@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 
-from council.bridge import TmuxBridge, AgentResponse
+from council.bridge import Bridge, AgentResponse
 from council.config import CouncilConfig
 from council.memory import (
     init_memory,
@@ -54,7 +54,7 @@ class CouncilResult:
 class CouncilPipeline:
     """Orchestrates the 3-stage council deliberation with live feedback."""
 
-    def __init__(self, config: CouncilConfig, bridge: TmuxBridge):
+    def __init__(self, config: CouncilConfig, bridge: Bridge):
         self.config = config
         self.bridge = bridge
 
@@ -62,7 +62,7 @@ class CouncilPipeline:
         self,
         question: str,
         verbose: bool = False,
-        use_tmux_parallel: bool = False,
+        use_parallel: bool = True,
     ) -> CouncilResult:
         run_id = uuid.uuid4().hex[:8]
         result = CouncilResult(question=question, run_id=run_id)
@@ -86,14 +86,14 @@ class CouncilPipeline:
         print_stage_header(1, active_agents)
         stage1_prompt = build_stage1_prompt(brief=question, soul=soul, memory=memory)
 
-        if use_tmux_parallel and len(active_agents) > 1:
+        if use_parallel and len(active_agents) > 1:
             stream = StreamingDisplay()
             stream.start(active_agents)
 
             def on_parallel_chunk(agent_name, chunk):
                 stream.update_chunk(agent_name, chunk)
 
-            responses = self.bridge.query_agents_parallel_tmux(
+            responses = self.bridge.query_agents_parallel(
                 active_agents, stage1_prompt, run_id,
                 on_chunk=on_parallel_chunk,
             )

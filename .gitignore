@@ -8,6 +8,7 @@ build/
 .eggs/
 *.so
 .DS_Store
+.env
 /tmp/
 council-*.txt
 memory/

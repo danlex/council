@@ -8,7 +8,7 @@ from rich.markdown import Markdown
 from rich.rule import Rule
 
 from council.config import load_config, CouncilConfig
-from council.bridge import TmuxBridge
+from council.bridge import Bridge
 from council.pipeline import CouncilPipeline
 from council.memory import init_memory, load_memory, save_correction, list_memories
 from council.display import (
@@ -48,7 +48,7 @@ def run():
         console.print(f"  Memory: {len(memories)} entries loaded")
     console.print()
 
-    bridge = TmuxBridge(session_prefix=config.session_prefix)
+    bridge = Bridge(config=config)
     pipeline = CouncilPipeline(config=config, bridge=bridge)
 
     # ═══════════════════════════════════════════
@@ -90,7 +90,7 @@ def run():
         result = pipeline.run(
             question=brief,
             verbose=False,
-            use_tmux_parallel=len(active) > 1,
+            use_parallel=len(active) > 1,
         )
 
         # ─── Post-session feedback ──────────────
@@ -107,7 +107,7 @@ def run():
             pass
 
 
-def _clarify(question: str, config: CouncilConfig, bridge: TmuxBridge) -> str | None:
+def _clarify(question: str, config: CouncilConfig, bridge: Bridge) -> str | None:
     """Clarification phase: the lead agent helps refine the question.
 
     Returns the refined brief, or None if cancelled.
@@ -241,7 +241,11 @@ def _show_models(config: CouncilConfig):
         color = get_agent_color(name)
         status = "[green]on[/green]" if agent.enabled else "[dim]off[/dim]"
         role = " [yellow](chairman)[/yellow]" if name == config.chairman else ""
-        console.print(f"  [{color}]{agent.display_name}[/{color}] {status}{role}")
+        if agent.type == "openrouter":
+            via = f"[dim]via OpenRouter ({agent.model})[/dim]"
+        else:
+            via = f"[dim]via CLI ({agent.command})[/dim]"
+        console.print(f"  [{color}]{agent.display_name}[/{color}] {status}{role} {via}")
     console.print()
 
 

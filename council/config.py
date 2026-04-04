@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -15,28 +16,32 @@ DEFAULT_CONFIG = {
     "agents": {
         "claude": {
             "enabled": True,
+            "type": "cli",
             "command": "claude",
             "args": ["-p", "--max-turns", "10", "--output-format", "text"],
             "display_name": "Claude Code",
             "timeout": 300,
         },
-        "codex": {
+        "gpt": {
             "enabled": True,
-            "command": "codex",
-            "args": ["exec", "--skip-git-repo-check"],
-            "display_name": "Codex CLI",
-            "timeout": 300,
+            "type": "openrouter",
+            "model": "openai/gpt-4.1",
+            "display_name": "GPT-4.1",
+            "timeout": 120,
         },
         "gemini": {
             "enabled": True,
-            "command": "gemini",
-            "args": ["-p", "{prompt}"],
-            "display_name": "Gemini CLI",
-            "timeout": 300,
+            "type": "openrouter",
+            "model": "google/gemini-2.5-pro-preview",
+            "display_name": "Gemini 2.5 Pro",
+            "timeout": 120,
         },
     },
     "chairman": "claude",
     "soul_file": "SOUL.md",
+    "openrouter": {
+        "base_url": "https://openrouter.ai/api/v1",
+    },
     "review": {
         "anonymize": True,
         "rubric": ["accuracy", "reasoning", "completeness", "nuance"],
@@ -55,9 +60,14 @@ DEFAULT_CONFIG = {
 class AgentConfig:
     name: str
     enabled: bool
-    command: str
-    args: list[str]
     display_name: str
+    type: str = "cli"  # "cli" or "openrouter"
+    # CLI fields
+    command: str = ""
+    args: list[str] = field(default_factory=list)
+    # OpenRouter fields
+    model: str = ""
+    # Common
     timeout: int = 300
 
 
@@ -71,6 +81,7 @@ class CouncilConfig:
     show_confidence: bool = True
     session_prefix: str = "council"
     soul_file: str = "SOUL.md"
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
 
     @property
     def active_agents(self) -> list[AgentConfig]:
@@ -80,7 +91,6 @@ class CouncilConfig:
     def chairman_agent(self) -> AgentConfig:
         if self.chairman in self.agents and self.agents[self.chairman].enabled:
             return self.agents[self.chairman]
-        # Fall back to first active agent
         active = self.active_agents
         if active:
             return active[0]
@@ -93,6 +103,10 @@ class CouncilConfig:
         if path.exists():
             return path.read_text().strip()
         return ""
+
+    @property
+    def openrouter_api_key(self) -> str:
+        return os.environ.get("OPENROUTER_API_KEY", "")
 
 
 def load_config(config_path: Path | None = None) -> CouncilConfig:
@@ -110,15 +124,18 @@ def load_config(config_path: Path | None = None) -> CouncilConfig:
         agents[name] = AgentConfig(
             name=name,
             enabled=agent_raw.get("enabled", False),
-            command=agent_raw.get("command", name),
-            args=agent_raw.get("args", []),
+            type=agent_raw.get("type", "cli"),
             display_name=agent_raw.get("display_name", name),
+            command=agent_raw.get("command", ""),
+            args=agent_raw.get("args", []),
+            model=agent_raw.get("model", ""),
             timeout=agent_raw.get("timeout", 300),
         )
 
     review = raw.get("review", {})
     synthesis = raw.get("synthesis", {})
     tmux = raw.get("tmux", {})
+    openrouter = raw.get("openrouter", {})
 
     return CouncilConfig(
         agents=agents,
@@ -129,6 +146,7 @@ def load_config(config_path: Path | None = None) -> CouncilConfig:
         show_confidence=synthesis.get("show_confidence", True),
         session_prefix=tmux.get("session_prefix", "council"),
         soul_file=raw.get("soul_file", "SOUL.md"),
+        openrouter_base_url=openrouter.get("base_url", "https://openrouter.ai/api/v1"),
     )
 
 

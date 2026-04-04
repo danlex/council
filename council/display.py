@@ -26,6 +26,7 @@ STAGE_NAMES = {
 }
 AGENT_COLORS = {
     "claude": "magenta",
+    "gpt": "bright_green",
     "codex": "bright_green",
     "gemini": "blue",
     "glm": "red",
