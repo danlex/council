@@ -139,6 +139,7 @@ class CouncilPipeline:
         # ═══════════════════════════════════════════
         # STAGE 2: Anonymized Peer Review
         # ═══════════════════════════════════════════
+        # Each agent reviews ONLY other agents' responses (not their own)
         review_agents = [a for a in active_agents if any(r.agent_name == a.name for r in successful)]
         print_stage_header(2, review_agents)
 
@@ -146,14 +147,20 @@ class CouncilPipeline:
             {"agent_id": r.agent_name, "agent_name": r.display_name, "response": r.response}
             for r in successful
         ]
-        stage2_prompt = build_stage2_prompt(
-            brief=question,
-            responses=response_dicts,
-            rubric=self.config.rubric,
-        )
 
         reviews = []
         for agent in review_agents:
+            # Filter out this agent's own response to prevent self-review bias
+            other_responses = [r for r in response_dicts if r["agent_id"] != agent.name]
+            if not other_responses:
+                continue  # Nothing to review
+
+            stage2_prompt = build_stage2_prompt(
+                brief=question,
+                responses=other_responses,
+                rubric=self.config.rubric,
+            )
+
             stream = StreamingDisplay()
             stream.start([agent])
 
@@ -181,10 +188,15 @@ class CouncilPipeline:
         chairman = self.config.chairman_agent
         print_stage_header(3, [chairman])
 
-        review_dicts = [
-            {"agent_id": r.agent_name, "agent_name": r.display_name, "response": r.response}
-            for r in successful_reviews
-        ]
+        if successful_reviews:
+            review_dicts = [
+                {"agent_id": r.agent_name, "agent_name": r.display_name, "response": r.response}
+                for r in successful_reviews
+            ]
+        else:
+            console.print("  [yellow]No reviews succeeded — synthesizing from responses only[/yellow]")
+            review_dicts = []
+
         stage3_prompt = build_stage3_prompt(
             brief=question,
             responses=response_dicts,

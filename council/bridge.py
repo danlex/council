@@ -8,10 +8,14 @@ import time
 import re
 import urllib.request
 import urllib.error
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 from council.config import AgentConfig, CouncilConfig
+
+MAX_RETRIES = 2
+RETRY_BACKOFF = [1, 3]  # seconds
+RETRYABLE_CODES = {429, 500, 502, 503, 504}
 
 
 @dataclass
@@ -22,6 +26,10 @@ class AgentResponse:
     elapsed_seconds: float
     success: bool
     error: str | None = None
+    # Cost tracking
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cost_usd: float = 0.0
 
 
 class Bridge:
@@ -29,7 +37,6 @@ class Bridge:
 
     def __init__(self, config: CouncilConfig):
         self.config = config
-        self.session_prefix = config.session_prefix
 
     def query_agent(
         self,
@@ -141,7 +148,7 @@ class Bridge:
                 error=str(e),
             )
 
-    # ─── OpenRouter API ─────────────────────────────────────────────────
+    # ─── OpenRouter API with SSE streaming + retry ──────────────────────
 
     def _query_openrouter(
         self,
@@ -161,6 +168,36 @@ class Bridge:
                 error="OPENROUTER_API_KEY not set. Add it to .env",
             )
 
+        last_error = None
+        for attempt in range(MAX_RETRIES + 1):
+            if attempt > 0:
+                time.sleep(RETRY_BACKOFF[min(attempt - 1, len(RETRY_BACKOFF) - 1)])
+
+            result = self._openrouter_request(agent, prompt, api_key, on_chunk)
+            if result.success:
+                return result
+
+            last_error = result.error
+            # Only retry on transient errors
+            if not _is_retryable(result.error):
+                return result
+
+        return AgentResponse(
+            agent_name=agent.name,
+            display_name=agent.display_name,
+            response="",
+            elapsed_seconds=result.elapsed_seconds if result else 0,
+            success=False,
+            error=f"Failed after {MAX_RETRIES + 1} attempts: {last_error}",
+        )
+
+    def _openrouter_request(
+        self,
+        agent: AgentConfig,
+        prompt: str,
+        api_key: str,
+        on_chunk: Callable[[str], None] | None = None,
+    ) -> AgentResponse:
         start = time.time()
         try:
             url = f"{self.config.openrouter_base_url}/chat/completions"
@@ -168,6 +205,7 @@ class Bridge:
                 "model": agent.model,
                 "messages": [{"role": "user", "content": prompt}],
                 "max_tokens": 16384,
+                "stream": True,
             }).encode()
 
             req = urllib.request.Request(
@@ -181,22 +219,58 @@ class Bridge:
                 },
             )
 
+            content_parts = []
+            prompt_tokens = 0
+            completion_tokens = 0
+            cost_usd = 0.0
+
             with urllib.request.urlopen(req, timeout=agent.timeout) as resp:
-                body = json.loads(resp.read().decode())
+                for raw_line in resp:
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line:
+                        continue
+                    if not line.startswith("data: "):
+                        continue
+
+                    data = line[6:]  # Strip "data: " prefix
+                    if data == "[DONE]":
+                        break
+
+                    try:
+                        chunk = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+
+                    # Extract streaming content delta
+                    choices = chunk.get("choices", [])
+                    if choices:
+                        delta = choices[0].get("delta", {})
+                        text = delta.get("content", "")
+                        if text:
+                            content_parts.append(text)
+                            if on_chunk:
+                                on_chunk(text)
+
+                    # Extract usage from final chunk
+                    usage = chunk.get("usage")
+                    if usage:
+                        prompt_tokens = usage.get("prompt_tokens", 0)
+                        completion_tokens = usage.get("completion_tokens", 0)
+                        cost_usd = usage.get("cost", 0.0)
 
             elapsed = time.time() - start
-
-            content = body.get("choices", [{}])[0].get("message", {}).get("content", "")
-            if on_chunk and content:
-                on_chunk(content)
+            content = "".join(content_parts).strip()
 
             return AgentResponse(
                 agent_name=agent.name,
                 display_name=agent.display_name,
-                response=content.strip(),
+                response=content,
                 elapsed_seconds=elapsed,
-                success=bool(content.strip()),
-                error=None if content.strip() else "Empty response from API",
+                success=bool(content),
+                error=None if content else "Empty response from API",
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cost_usd=cost_usd,
             )
 
         except urllib.error.HTTPError as e:
@@ -225,7 +299,7 @@ class Bridge:
                 error=str(e),
             )
 
-    # ─── Parallel (tmux for CLI, threaded for API) ──────────────────────
+    # ─── Parallel execution ─────────────────────────────────────────────
 
     def query_agents_parallel(
         self,
@@ -251,6 +325,18 @@ class Bridge:
                 results.append(future.result())
 
         return results
+
+
+def _is_retryable(error: str | None) -> bool:
+    """Check if an error is transient and worth retrying."""
+    if not error:
+        return False
+    for code in RETRYABLE_CODES:
+        if f"HTTP {code}" in error:
+            return True
+    if "timed out" in error.lower() or "timeout" in error.lower():
+        return True
+    return False
 
 
 def _strip_ansi(text: str) -> str:

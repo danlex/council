@@ -77,10 +77,21 @@ def run():
             _show_models(config)
             continue
 
+        if question.strip().lower() == "help":
+            console.print("  [dim]Commands: memory, models, help, quit[/dim]")
+            console.print("  [dim]Prefix with ! to skip clarification (e.g. !What is X?)[/dim]")
+            console.print()
+            continue
+
         # ─── Clarification Phase ────────────────
-        brief = _clarify(question, config, bridge)
-        if brief is None:
-            continue  # User cancelled
+        skip_clarify = question.strip().startswith("!")
+        if skip_clarify:
+            question = question.strip()[1:].strip()
+            brief = question
+        else:
+            brief = _clarify(question, config, bridge)
+            if brief is None:
+                continue  # User cancelled
 
         # ─── Council Deliberation ───────────────
         console.print()

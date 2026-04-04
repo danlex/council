@@ -227,19 +227,22 @@ def print_memory_saved(path):
 
 
 def print_stats(stage1, stage2, stage3):
-    """Print timing statistics table."""
+    """Print timing and cost statistics table."""
     table = Table(box=box.SIMPLE, show_header=True, header_style="bold dim")
     table.add_column("Agent", style="bold")
     table.add_column("Stage 1", justify="center")
     table.add_column("Stage 2", justify="center")
     table.add_column("Stage 3", justify="center")
-    table.add_column("Total", justify="right")
+    table.add_column("Time", justify="right")
+    table.add_column("Cost", justify="right")
 
+    all_responses = list(stage1 or []) + list(stage2 or []) + ([stage3] if stage3 else [])
     s1 = {r.agent_name: r for r in (stage1 or [])}
     s2 = {r.agent_name: r for r in (stage2 or [])}
     s3 = {stage3.agent_name: stage3} if stage3 else {}
 
     all_names = set(list(s1.keys()) + list(s2.keys()) + list(s3.keys()))
+    total_cost = 0.0
 
     for name in sorted(all_names):
         color = get_agent_color(name)
@@ -249,8 +252,14 @@ def print_stats(stage1, stage2, stage3):
             if r is None: return "[dim]-[/dim]"
             return f"[green]{r.elapsed_seconds:.1f}s[/green]" if r.success else "[red]fail[/red]"
 
-        total = sum(r.elapsed_seconds for r in [r1, r2, r3] if r)
+        total_time = sum(r.elapsed_seconds for r in [r1, r2, r3] if r)
+        agent_cost = sum(r.cost_usd for r in [r1, r2, r3] if r)
+        total_cost += agent_cost
         dn = r1.display_name if r1 else (r2.display_name if r2 else name)
-        table.add_row(f"[{color}]{dn}[/{color}]", fmt(r1), fmt(r2), fmt(r3), f"[bold]{total:.1f}s[/bold]")
+        cost_str = f"${agent_cost:.4f}" if agent_cost > 0 else "[dim]-[/dim]"
+        table.add_row(f"[{color}]{dn}[/{color}]", fmt(r1), fmt(r2), fmt(r3), f"[bold]{total_time:.1f}s[/bold]", cost_str)
 
     console.print(table)
+    if total_cost > 0:
+        console.print(f"  [dim]Session cost: ${total_cost:.4f}[/dim]")
+        console.print()

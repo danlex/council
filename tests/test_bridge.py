@@ -11,6 +11,7 @@ from council.bridge import (
     AgentResponse,
     _strip_ansi,
     _strip_cli_metadata,
+    _is_retryable,
 )
 from council.config import AgentConfig, CouncilConfig
 
@@ -175,12 +176,20 @@ class TestBridgeOpenRouter:
     @patch("council.bridge.urllib.request.urlopen")
     def test_openrouter_success(self, mock_urlopen, monkeypatch):
         monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+        # Simulate SSE streaming response
+        sse_lines = [
+            b'data: {"choices":[{"delta":{"content":"Hello "}}]}\n',
+            b'\n',
+            b'data: {"choices":[{"delta":{"content":"from GPT"}}]}\n',
+            b'\n',
+            b'data: {"usage":{"prompt_tokens":10,"completion_tokens":5,"cost":0.001}}\n',
+            b'\n',
+            b'data: [DONE]\n',
+        ]
         mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({
-            "choices": [{"message": {"content": "Hello from GPT"}}]
-        }).encode()
         mock_response.__enter__ = lambda s: s
         mock_response.__exit__ = MagicMock(return_value=False)
+        mock_response.__iter__ = lambda s: iter(sse_lines)
         mock_urlopen.return_value = mock_response
 
         agent = _api_agent()
@@ -190,16 +199,22 @@ class TestBridgeOpenRouter:
         assert resp.success
         assert resp.response == "Hello from GPT"
         assert resp.agent_name == "gpt"
+        assert resp.prompt_tokens == 10
+        assert resp.completion_tokens == 5
+        assert resp.cost_usd == 0.001
 
     @patch("council.bridge.urllib.request.urlopen")
     def test_openrouter_empty_response(self, mock_urlopen, monkeypatch):
         monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+        sse_lines = [
+            b'data: {"choices":[{"delta":{}}]}\n',
+            b'\n',
+            b'data: [DONE]\n',
+        ]
         mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({
-            "choices": [{"message": {"content": ""}}]
-        }).encode()
         mock_response.__enter__ = lambda s: s
         mock_response.__exit__ = MagicMock(return_value=False)
+        mock_response.__iter__ = lambda s: iter(sse_lines)
         mock_urlopen.return_value = mock_response
 
         agent = _api_agent()
@@ -228,12 +243,17 @@ class TestBridgeOpenRouter:
     @patch("council.bridge.urllib.request.urlopen")
     def test_openrouter_callback(self, mock_urlopen, monkeypatch):
         monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+        sse_lines = [
+            b'data: {"choices":[{"delta":{"content":"Chunk1"}}]}\n',
+            b'\n',
+            b'data: {"choices":[{"delta":{"content":"Chunk2"}}]}\n',
+            b'\n',
+            b'data: [DONE]\n',
+        ]
         mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({
-            "choices": [{"message": {"content": "Callback test"}}]
-        }).encode()
         mock_response.__enter__ = lambda s: s
         mock_response.__exit__ = MagicMock(return_value=False)
+        mock_response.__iter__ = lambda s: iter(sse_lines)
         mock_urlopen.return_value = mock_response
 
         agent = _api_agent()
@@ -242,7 +262,7 @@ class TestBridgeOpenRouter:
         chunks = []
         resp = bridge.query_agent(agent, "test", "test5", on_chunk=chunks.append)
         assert resp.success
-        assert chunks == ["Callback test"]
+        assert chunks == ["Chunk1", "Chunk2"]
 
 
 # ─── Parallel ───────────────────────────────────────────────────────────
@@ -289,3 +309,54 @@ class TestBridgeParallel:
         assert len(results) == 1
         assert results[0].success
         assert any(name == "x" for name, _ in chunks)
+
+
+# ─── Retry logic ────────────────────────────────────────────────────────
+
+class TestRetryable:
+    def test_429_is_retryable(self):
+        assert _is_retryable("HTTP 429: Rate limited")
+
+    def test_500_is_retryable(self):
+        assert _is_retryable("HTTP 500: Internal Server Error")
+
+    def test_502_is_retryable(self):
+        assert _is_retryable("HTTP 502: Bad Gateway")
+
+    def test_timeout_is_retryable(self):
+        assert _is_retryable("Timed out after 30s")
+
+    def test_400_is_not_retryable(self):
+        assert not _is_retryable("HTTP 400: Bad Request")
+
+    def test_empty_error_not_retryable(self):
+        assert not _is_retryable("")
+
+    def test_none_not_retryable(self):
+        assert not _is_retryable(None)
+
+    def test_auth_error_not_retryable(self):
+        assert not _is_retryable("HTTP 401: Unauthorized")
+
+
+# ─── Cost tracking ──────────────────────────────────────────────────────
+
+class TestCostTracking:
+    def test_response_has_cost_fields(self):
+        r = AgentResponse(
+            agent_name="test", display_name="Test",
+            response="hi", elapsed_seconds=1.0, success=True,
+        )
+        assert r.prompt_tokens == 0
+        assert r.completion_tokens == 0
+        assert r.cost_usd == 0.0
+
+    def test_response_cost_fields_set(self):
+        r = AgentResponse(
+            agent_name="test", display_name="Test",
+            response="hi", elapsed_seconds=1.0, success=True,
+            prompt_tokens=100, completion_tokens=50, cost_usd=0.0023,
+        )
+        assert r.prompt_tokens == 100
+        assert r.completion_tokens == 50
+        assert r.cost_usd == 0.0023
