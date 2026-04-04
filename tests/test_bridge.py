@@ -12,6 +12,7 @@ from council.bridge import (
     _strip_ansi,
     _strip_cli_metadata,
     _is_retryable,
+    _split_prompt_messages,
 )
 from council.config import AgentConfig, CouncilConfig
 
@@ -360,3 +361,37 @@ class TestCostTracking:
         assert r.prompt_tokens == 100
         assert r.completion_tokens == 50
         assert r.cost_usd == 0.0023
+
+
+# ─── Prompt splitting ───────────────────────────────────────────────────
+
+class TestSplitPromptMessages:
+    def test_splits_on_brief_marker(self):
+        prompt = "System stuff\n\n## Your Brief\nThe actual question"
+        msgs = _split_prompt_messages(prompt)
+        assert len(msgs) == 2
+        assert msgs[0]["role"] == "system"
+        assert "System stuff" in msgs[0]["content"]
+        assert msgs[1]["role"] == "user"
+        assert "Your Brief" in msgs[1]["content"]
+
+    def test_splits_on_stage2_marker(self):
+        prompt = "Review instructions\n\n## Brief\nCompare X vs Y"
+        msgs = _split_prompt_messages(prompt)
+        assert len(msgs) == 2
+        assert msgs[0]["role"] == "system"
+        assert msgs[1]["role"] == "user"
+
+    def test_no_marker_returns_single_user(self):
+        prompt = "Just a plain prompt with no brief marker"
+        msgs = _split_prompt_messages(prompt)
+        assert len(msgs) == 1
+        assert msgs[0]["role"] == "user"
+        assert msgs[0]["content"] == prompt
+
+    def test_empty_system_falls_back(self):
+        prompt = "## Your Brief\nOnly brief, no system"
+        msgs = _split_prompt_messages(prompt)
+        # System part is empty, so should fallback to single user msg
+        assert len(msgs) == 1
+        assert msgs[0]["role"] == "user"

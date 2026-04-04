@@ -141,3 +141,16 @@ class TestBuildStage3:
         result = build_stage3_prompt("test", self._responses(), self._reviews())
         assert "Reviewer 1" in result
         assert "Reviewer 2" in result
+
+    def test_includes_soul(self):
+        result = build_stage3_prompt("test", self._responses(), self._reviews(), soul="Be honest")
+        assert "Be honest" in result
+        assert "Council Soul" in result
+
+    def test_includes_memory(self):
+        result = build_stage3_prompt("test", self._responses(), self._reviews(), memory="Prior: X is Y")
+        assert "X is Y" in result
+
+    def test_empty_reviews_shows_message(self):
+        result = build_stage3_prompt("test", self._responses(), [])
+        assert "No peer reviews available" in result

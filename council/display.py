@@ -236,7 +236,6 @@ def print_stats(stage1, stage2, stage3):
     table.add_column("Time", justify="right")
     table.add_column("Cost", justify="right")
 
-    all_responses = list(stage1 or []) + list(stage2 or []) + ([stage3] if stage3 else [])
     s1 = {r.agent_name: r for r in (stage1 or [])}
     s2 = {r.agent_name: r for r in (stage2 or [])}
     s3 = {stage3.agent_name: stage3} if stage3 else {}

@@ -83,6 +83,10 @@ IMPORTANT: Responses are anonymized. Judge ONLY by content quality.
 
 STAGE3_SYNTHESIS = """You are the Chairman of a council of AI experts. Synthesize the best possible answer from multiple expert responses and their peer reviews.
 
+{soul_section}
+
+{memory_section}
+
 CRITICAL RULES:
 1. DO NOT average opinions or find the middle ground — that is a bias trap.
 2. Weight by QUALITY OF REASONING, not consensus. A well-reasoned minority beats a poorly-reasoned majority.
@@ -179,6 +183,8 @@ def build_stage3_prompt(
     responses: list[dict],
     reviews: list[dict],
     preserve_dissent: bool = True,
+    soul: str = "",
+    memory: str = "",
 ) -> str:
     formatted_reviews = []
     for i, rev in enumerate(reviews):
@@ -186,6 +192,8 @@ def build_stage3_prompt(
 
     return STAGE3_SYNTHESIS.format(
         brief=brief,
+        soul_section=_section("Council Soul", soul),
+        memory_section=_section("Shared Memory", memory),
         anonymized_responses=format_anonymized_responses(responses),
-        reviews="\n\n---\n\n".join(formatted_reviews),
+        reviews="\n\n---\n\n".join(formatted_reviews) if formatted_reviews else "(No peer reviews available)",
     )

@@ -201,9 +201,10 @@ class Bridge:
         start = time.time()
         try:
             url = f"{self.config.openrouter_base_url}/chat/completions"
+            messages = _split_prompt_messages(prompt)
             payload = json.dumps({
                 "model": agent.model,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": messages,
                 "max_tokens": 16384,
                 "stream": True,
             }).encode()
@@ -337,6 +338,28 @@ def _is_retryable(error: str | None) -> bool:
     if "timed out" in error.lower() or "timeout" in error.lower():
         return True
     return False
+
+
+def _split_prompt_messages(prompt: str) -> list[dict]:
+    """Split a council prompt into system + user messages for API calls.
+
+    If the prompt contains '## Your Brief' or '## Brief', everything before
+    it becomes the system message and everything from the brief onward
+    becomes the user message. This ensures SOUL.md and memory are set as
+    system-level instructions.
+    """
+    for marker in ("## Your Brief", "## Brief"):
+        if marker in prompt:
+            idx = prompt.index(marker)
+            system = prompt[:idx].strip()
+            user = prompt[idx:].strip()
+            if system and user:
+                return [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ]
+    # Fallback: everything as user message
+    return [{"role": "user", "content": prompt}]
 
 
 def _strip_ansi(text: str) -> str:

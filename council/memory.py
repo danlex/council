@@ -22,7 +22,7 @@ from pathlib import Path
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MEMORY_DIR = _PROJECT_ROOT / "memory"
 MEMORY_INDEX = MEMORY_DIR / "MEMORY.md"
-SUBDIRS = ["learnings", "corrections", "context", "preferences"]
+SUBDIRS = ["learnings", "corrections", "context", "preferences", "sessions"]
 
 
 def init_memory():
