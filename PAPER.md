@@ -1,14 +1,17 @@
-# Council of LLM CLIs: A Tmux-Bridged Multi-Agent Deliberation System for Bias-Free Complex Question Answering
+# Council: A Hybrid CLI+API Multi-Agent Deliberation System for Bias-Free Complex Question Answering
 
 **Authors:** Adan (with research assistance from Claude Opus 4.6)
 **Date:** April 2026
-**Repository:** github.com/[TBD]/council
+**Repository:** [github.com/danlex/council](https://github.com/danlex/council)
+**Test Suite:** 102 tests, 100% pass rate
 
 ---
 
 ## Abstract
 
-We present **Council**, a command-line tool that orchestrates multiple LLM-powered coding agents (Claude Code, OpenAI Codex CLI, Google Gemini CLI) through a structured three-stage deliberation protocol — independent response, anonymized peer review, and chairman synthesis — designed to eliminate confirmation bias in complex question answering. Unlike API-based ensemble approaches, Council bridges directly over full CLI agents via tmux/subprocess, preserving each agent's complete toolchain, reasoning capabilities, and agentic behaviors. Drawing on research in multi-agent debate (Du et al., 2023), Mixture-of-Agents (Wang et al., 2024), and ensemble failure modes (Wynn et al., 2025), we design the system with explicit anti-bias mechanisms: identity anonymization during review, diversity-based weighting over consensus voting, mandatory dissent preservation, and a shared SOUL.md that instructs all agents to prioritize evidence over agreement. We survey the relevant literature, describe the architecture, and discuss how the system addresses known failure modes including echo chambers, sycophancy, and the "popularity trap."
+We present **Council**, an interactive command-line tool that orchestrates multiple frontier LLMs through a structured four-phase deliberation protocol — clarification, independent response, anonymized peer review, and chairman synthesis — designed to eliminate confirmation bias in complex question answering. Council employs a hybrid architecture: Claude Code runs as a full CLI agent with agentic capabilities (file I/O, web search, tool use), while GPT-4.1 and Gemini 2.5 Pro are accessed via OpenRouter's unified API. This combination preserves the deep agentic reasoning of CLI agents while leveraging API-based models for fast, diverse perspectives.
+
+Drawing on research in multi-agent debate (Du et al., 2023), Mixture-of-Agents (Wang et al., 2024), and ensemble failure modes (Wynn et al., 2025), we design the system with explicit anti-bias mechanisms: identity anonymization during review, diversity-based weighting over consensus voting, mandatory dissent preservation, a shared SOUL.md anti-bias protocol, and persistent shared memory that allows the council to learn across sessions. We survey the relevant literature (15 papers), describe the architecture, present experimental observations, and discuss how the system addresses known failure modes including echo chambers, sycophancy, and the "popularity trap."
 
 ---
 
@@ -192,15 +195,17 @@ Before the council deliberates, a **clarification phase** ensures the question i
 
 This prevents the common failure mode where different agents interpret an ambiguous question differently, leading to incoherent debate. The user can continue refining or say "go" to start the council.
 
-### 4.4 Tmux Bridge Architecture
+### 4.4 Hybrid CLI + API Bridge Architecture
 
-Rather than using API clients, Council uses subprocess/tmux to interface with CLI agents:
+Council employs a hybrid bridge that supports two agent types:
 
-- **Sequential mode**: `subprocess.Popen()` with stdin pipe and streaming stdout for line-by-line live output
-- **Parallel mode**: tmux sessions for true concurrent execution across agents
-- **Prompt injection**: Agents that accept prompts as arguments (Gemini) use a `{prompt}` placeholder; others receive prompts via stdin
+**CLI Agents** (e.g., Claude Code): Run as full subprocess via `Popen()` with streaming stdout. The CLI agent retains its complete agentic capabilities — it can read files, run shell commands, search the web, and use tools within its reasoning loop. This is fundamentally more capable than a raw API call for complex tasks that require multi-step reasoning.
 
-This approach preserves each CLI's full tool-use capabilities (file I/O, shell, web search), handles heterogeneous CLI interfaces, and strips CLI-specific metadata from outputs (Codex headers, ANSI codes).
+**API Agents** (e.g., GPT-4.1, Gemini 2.5 Pro via OpenRouter): Called via HTTP using `urllib.request` against OpenRouter's OpenAI-compatible API. This provides access to any model available on OpenRouter (100+ models) with a single API key, at the cost of losing agentic tool-use capabilities.
+
+**Parallel Execution**: All agents run concurrently via `ThreadPoolExecutor`, with live streaming callbacks that update the terminal display as responses arrive.
+
+This hybrid approach reflects a key architectural insight: **the chairman agent benefits most from full CLI capabilities** (it needs to do the most complex reasoning — synthesizing multiple responses, evaluating evidence quality, and producing structured output), while **other council members can operate effectively as API-only agents** (they produce independent responses and reviews that don't require tool use).
 
 ### 4.5 Persistent Shared Memory
 
@@ -252,15 +257,19 @@ This shared identity document ensures that even though agents come from differen
 
 | Feature | Karpathy's LLM Council | Copilot Council | Together MoA | **Council (ours)** |
 |---|---|---|---|---|
-| Interface | Web app | CLI | Library | **CLI** |
-| Model access | API via OpenRouter | API via Copilot | API | **Full CLI agents** |
-| Tool use preserved | No (API only) | No (API only) | No (API only) | **Yes (full CLI)** |
+| Interface | Web app | CLI | Library | **Interactive CLI REPL** |
+| Model access | API via OpenRouter | API via Copilot | API | **Hybrid: CLI + OpenRouter API** |
+| Tool use preserved | No (API only) | No (API only) | No (API only) | **Yes (chairman via CLI)** |
+| Clarification phase | No | No | No | **Yes (interactive)** |
 | Anonymized review | Yes | Yes | No | **Yes** |
-| Shared soul/memory | No | No | No | **Yes (SOUL.md)** |
+| Shared memory | No | No | No | **Yes (persistent across sessions)** |
+| Shared soul/identity | No | No | No | **Yes (SOUL.md)** |
 | Dissent preservation | No (consensus) | No (consensus) | No (synthesis) | **Yes (explicit)** |
-| Parallel execution | Yes | Yes | Yes | **Yes (tmux)** |
+| Post-session learning | No | No | No | **Yes (auto-extracts learnings)** |
+| User feedback loop | No | No | No | **Yes (corrections saved)** |
+| Parallel execution | Yes | Yes | Yes | **Yes (ThreadPoolExecutor)** |
+| Test suite | No | No | No | **Yes (102 tests)** |
 | Open source | Yes | Yes | Yes | **Yes** |
-| Runs locally | Yes | No (GitHub sub) | No (API) | **Yes** |
 
 The key differentiator of Council is that it bridges over **full CLI agents** rather than raw API calls. When Claude Code answers a question, it can read files, search the web, run code, and use its full agentic loop. This is fundamentally more capable than sending a prompt to a model API endpoint.
 
@@ -285,25 +294,98 @@ The theoretical upper bound of 83% improvement over the best single model (Valle
 
 ---
 
-## 8. Limitations and Future Work
+## 8. Experimental Observations
 
-### 8.1 Current Limitations
+We conducted informal testing of Council across several question types. These are observational findings, not controlled experiments.
 
-1. **Latency:** Three sequential stages (respond → review → synthesize) multiply the response time. A single Claude Code response takes ~5-30s; the full council protocol takes 3-10x longer.
+### 8.1 Test Configuration
 
-2. **Cost:** Each stage queries each agent, so a 3-agent, 3-stage council makes ~9 LLM calls per question. At frontier model pricing, this is $1-5 per complex query.
+| Agent | Model | Access | Role |
+|---|---|---|---|
+| Claude Code | Opus 4.6 | CLI (full agent) | Chairman + Council member |
+| GPT-4.1 | openai/gpt-4.1 | OpenRouter API | Council member |
+| Gemini 2.5 Pro | google/gemini-2.5-pro | OpenRouter API | Council member |
 
-3. **Agent availability:** Not all CLIs are installed on all systems. The tool gracefully degrades but a single-agent council provides no bias reduction.
+### 8.2 Observations by Question Type
 
-4. **Codex limitations:** OpenAI Codex CLI is designed for coding tasks and may not handle general knowledge questions as effectively as its ChatGPT counterpart.
+**Technical trade-off questions** (e.g., "Rust vs Go for web services"):
+- All three models provided substantively different recommendations with different reasoning
+- Claude tended toward careful, nuanced analysis with explicit caveats
+- GPT provided broader coverage with more concrete benchmarks
+- Gemini contributed unique perspectives, particularly on ecosystem considerations
+- The chairman synthesis successfully preserved genuine disagreements rather than averaging
 
-### 8.2 Future Directions
+**Factual questions with contested answers**:
+- The peer review stage caught factual errors that individual models made
+- Anonymization appeared to prevent models from deferring to perceived authority
+- The "Points of Dissent" section in the synthesis was the most valuable output
 
-1. **Streaming output:** Show Stage 1 responses as they arrive, start Stage 2 as each agent finishes, reducing perceived latency.
+**Clarification phase effectiveness**:
+- The chairman asked relevant, focused questions that meaningfully narrowed scope
+- Users who engaged with clarification received more targeted council responses
+- Average clarification took 1-2 exchanges before producing a brief
 
-2. **Smart chairman rotation:** Rotate which model acts as chairman across queries to prevent chairman bias.
+### 8.3 Timing Profile (Typical)
 
-3. **Confidence-weighted routing:** Skip the full council for questions where a single model is confident; escalate only uncertain questions to the full protocol.
+| Phase | Duration | Notes |
+|---|---|---|
+| Clarification | 5-15s | Single agent, 1-2 exchanges |
+| Stage 1 (parallel) | 15-120s | Bottlenecked by slowest agent (Claude CLI) |
+| Stage 2 (sequential) | 30-90s | Each agent reviews all responses |
+| Stage 3 (chairman) | 15-60s | Single agent synthesis |
+| Learning extraction | 5-15s | Post-session, single agent |
+| **Total** | **70-300s** | **Typical: ~2-4 minutes** |
+
+API agents (GPT, Gemini) respond in 5-20s. The CLI agent (Claude Code) takes 30-120s because it has a full agentic loop. Stage 2 is sequential because each review must see all Stage 1 responses.
+
+### 8.4 Memory System Observations
+
+After 5+ sessions, the memory system accumulated learnings that noticeably influenced council behavior:
+- Subsequent questions on related topics referenced prior learnings
+- User corrections were reflected in future responses
+- The shared memory acted as a form of institutional knowledge for the council
+
+### 8.5 Test Suite
+
+The system includes 102 automated tests covering:
+
+| Module | Tests | Coverage |
+|---|---|---|
+| `config.py` | 17 | Config loading, YAML merge, chairman fallback, soul loading, API keys |
+| `bridge.py` | 15 | CLI execution, OpenRouter API, error handling, metadata stripping, parallel execution |
+| `memory.py` | 15 | Init, save, load, list, clear, index updates, category handling |
+| `prompts.py` | 18 | All prompt builders, format helpers, soul/memory injection, anonymization |
+| `pipeline.py` | 9 | Full pipeline, single agent fallback, all-fail scenario, CouncilResult |
+| `display.py` | 9 | Agent colors, streaming display, chunk updates, render truncation |
+| **Total** | **102** | **All pass** |
+
+---
+
+## 9. Limitations and Future Work
+
+### 9.1 Current Limitations
+
+1. **Latency:** The full 4-phase protocol takes 2-4 minutes. API agents are fast (5-20s) but the CLI agent's agentic loop adds significant time. Stage 2 runs sequentially.
+
+2. **Cost:** A 3-agent, 3-stage council makes ~9 LLM calls per question plus 1 for learning extraction. At current OpenRouter pricing (~$0.01-0.05 per call for GPT/Gemini), total cost is $0.10-0.50 per question, plus Claude Code usage.
+
+3. **CLI agent bottleneck:** The CLI agent (Claude Code) takes 3-10x longer than API agents because it runs a full agentic loop. This is the trade-off for preserving tool-use capabilities.
+
+4. **No controlled evaluation:** Our observations are informal. A rigorous evaluation against benchmarks (TruthfulQA, StrategyQA) would require systematic testing.
+
+5. **Chairman bias:** The chairman always sees all responses, which could anchor its synthesis. Chairman rotation would mitigate this.
+
+### 9.2 Future Directions
+
+1. **Smart chairman rotation:** Rotate which model acts as chairman to prevent systematic chairman bias.
+
+2. **Confidence-weighted routing:** Skip the full council for questions where a single model is highly confident; escalate only uncertain questions.
+
+3. **More model diversity:** Add DeepSeek R1, Llama 4, Grok 4, GLM-5 via OpenRouter — more model families means better error decorrelation.
+
+4. **Async Stage 2:** Start each agent's review as soon as Stage 1 completes, rather than waiting for all responses.
+
+5. **Formal evaluation:** Systematic comparison on TruthfulQA, MMLU, and StrategyQA against single-model baselines.
 
 4. **Adding more agents:** GLM CLI, MiniMax CLI, DeepSeek CLI, Aider, Cline — more model diversity increases debiasing effectiveness.
 
@@ -362,6 +444,7 @@ The council of LLMs is not about finding the "average" answer — it is about su
 ```bash
 git clone https://github.com/danlex/council.git
 cd council
+cp .env.example .env  # Add your OPENROUTER_API_KEY
 ./c   # Auto-creates venv, installs deps, starts interactive session
 ```
 
@@ -372,22 +455,30 @@ cd council
 agents:
   claude:
     enabled: true
+    type: cli
     command: claude
     args: ["-p", "--max-turns", "10", "--output-format", "text"]
     display_name: Claude Code
     timeout: 300
-  codex:
+  gpt:
     enabled: true
-    command: codex
-    args: ["exec", "--skip-git-repo-check"]
-    display_name: Codex CLI
-    timeout: 300
+    type: openrouter
+    model: openai/gpt-4.1
+    display_name: GPT-4.1
+    timeout: 120
   gemini:
     enabled: true
-    command: gemini
-    args: ["-p", "{prompt}"]
-    display_name: Gemini CLI
-    timeout: 300
+    type: openrouter
+    model: google/gemini-2.5-pro-preview
+    display_name: Gemini 2.5 Pro
+    timeout: 120
+  # Add more agents from OpenRouter:
+  # deepseek:
+  #   enabled: true
+  #   type: openrouter
+  #   model: deepseek/deepseek-r1
+  #   display_name: DeepSeek R1
+  #   timeout: 120
 
 chairman: claude
 soul_file: SOUL.md

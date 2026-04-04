@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import json
 import subprocess
-import shlex
 import time
 import re
-import os
 import urllib.request
 import urllib.error
 from dataclasses import dataclass
