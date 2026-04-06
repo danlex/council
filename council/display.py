@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 
 from rich.console import Console, Group
 from rich.live import Live
@@ -75,6 +76,7 @@ class StreamingDisplay:
         self.agent_buffers: dict[str, str] = {}
         self.agent_status: dict[str, str] = {}  # "streaming", "done", "failed"
         self.agent_times: dict[str, float] = {}
+        self.agent_start_times: dict[str, float] = {}
         self.agent_colors: dict[str, str] = {}
         self.agent_display_names: dict[str, str] = {}
         self.live: Live | None = None
@@ -83,10 +85,12 @@ class StreamingDisplay:
     def start(self, agents: list[AgentConfig]):
         """Begin live display for a set of agents."""
         with self._lock:
+            now = time.time()
             for a in agents:
                 self.agent_buffers[a.name] = ""
                 self.agent_status[a.name] = "streaming"
                 self.agent_times[a.name] = 0
+                self.agent_start_times[a.name] = now
                 self.agent_colors[a.name] = get_agent_color(a.name)
                 self.agent_display_names[a.name] = a.display_name
             self.live = Live(self._render(), console=console, refresh_per_second=4)
@@ -144,7 +148,8 @@ class StreamingDisplay:
                 display_content = content
 
             if status == "streaming":
-                title = f"[bold {color}]{display_name}[/bold {color}] [dim]streaming...[/dim]"
+                live_elapsed = time.time() - self.agent_start_times.get(name, time.time())
+                title = f"[bold {color}]{display_name}[/bold {color}] [dim]{live_elapsed:.0f}s...[/dim]"
                 border = color
             elif status == "done":
                 title = f"[bold {color}]{display_name}[/bold {color}] [green]done[/green] ({elapsed:.1f}s)"

@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Council of LLMs</title>
+<style>
+  :root { --bg: #0d1117; --fg: #e6edf3; --dim: #7d8590; --border: #30363d; --panel: #161b22; --green: #3fb950; --yellow: #d29922; --red: #f85149; --blue: #58a6ff; --purple: #bc8cff; --cyan: #79c0ff; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--fg); }
+  .container { max-width: 1000px; margin: 0 auto; padding: 2rem; }
+  h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+  h1 span { background: #b91c1c; color: white; padding: 0.15em 0.4em; border-radius: 3px; font-size: 0.9em; }
+  .subtitle { color: var(--dim); margin-bottom: 2rem; }
+
+  .input-area { display: flex; gap: 0.75rem; margin-bottom: 2rem; }
+  .input-area input { flex: 1; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem 1rem; color: var(--fg); font-size: 1rem; outline: none; }
+  .input-area input:focus { border-color: var(--blue); }
+  .input-area button { background: var(--blue); color: white; border: none; border-radius: 6px; padding: 0.75rem 1.5rem; font-size: 1rem; cursor: pointer; font-weight: 600; }
+  .input-area button:hover { opacity: 0.9; }
+  .input-area button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .stage-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; margin: 1.5rem 0 0.75rem; padding-bottom: 0.25rem; border-bottom: 1px solid var(--border); }
+  .stage-1 { color: var(--cyan); }
+  .stage-2 { color: var(--yellow); }
+  .stage-3 { color: var(--green); }
+
+  .agents { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0.75rem; margin-bottom: 1rem; }
+  .agent-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; min-height: 120px; max-height: 400px; overflow-y: auto; }
+  .agent-panel .name { font-weight: 600; font-size: 0.85rem; margin-bottom: 0.5rem; }
+  .agent-panel .content { font-size: 0.85rem; white-space: pre-wrap; word-wrap: break-word; line-height: 1.5; }
+  .agent-panel.streaming { border-color: var(--blue); }
+  .agent-panel.done { border-color: var(--green); }
+  .agent-panel.failed { border-color: var(--red); }
+
+  .synthesis-panel { background: var(--panel); border: 2px solid var(--green); border-radius: 8px; padding: 1.5rem; margin: 1rem 0; }
+  .synthesis-panel .name { font-weight: 600; color: var(--green); margin-bottom: 0.75rem; }
+  .synthesis-panel .content { line-height: 1.6; white-space: pre-wrap; word-wrap: break-word; }
+
+  .stats { display: flex; gap: 2rem; margin-top: 1rem; font-size: 0.85rem; color: var(--dim); }
+  .stats strong { color: var(--fg); }
+
+  .log { margin-top: 1rem; font-size: 0.8rem; color: var(--dim); max-height: 150px; overflow-y: auto; }
+  .log div { padding: 0.1rem 0; }
+
+  #status { font-size: 0.85rem; color: var(--dim); margin-bottom: 1rem; min-height: 1.2em; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1><span>COUNCIL</span> of LLMs</h1>
+  <p class="subtitle">Multi-agent deliberation without confirmation bias</p>
+
+  <div class="input-area">
+    <input id="question" type="text" placeholder="What do you want the council to investigate?" autofocus>
+    <button id="ask-btn" onclick="ask()">Ask</button>
+  </div>
+
+  <div id="status"></div>
+  <div id="output"></div>
+</div>
+
+<script>
+const output = document.getElementById('output');
+const status = document.getElementById('status');
+const input = document.getElementById('question');
+const btn = document.getElementById('ask-btn');
+let agentPanels = {};
+
+input.addEventListener('keydown', e => { if (e.key === 'Enter') ask(); });
+
+async function ask() {
+  const q = input.value.trim();
+  if (!q) return;
+
+  btn.disabled = true;
+  output.innerHTML = '';
+  agentPanels = {};
+  status.textContent = 'Starting council...';
+
+  try {
+    const resp = await fetch('/ask', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({question: q}),
+    });
+    const {run_id} = await resp.json();
+
+    const evtSource = new EventSource(`/stream?run_id=${run_id}`);
+    evtSource.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+      handleEvent(data);
+      if (data.type === 'done') {
+        evtSource.close();
+        btn.disabled = false;
+        status.textContent = 'Done.';
+      }
+    };
+    evtSource.onerror = () => {
+      evtSource.close();
+      btn.disabled = false;
+      status.textContent = 'Connection lost.';
+    };
+  } catch (err) {
+    status.textContent = `Error: ${err.message}`;
+    btn.disabled = false;
+  }
+}
+
+function handleEvent(data) {
+  switch (data.type) {
+    case 'stage':
+      const stageDiv = document.createElement('div');
+      stageDiv.className = `stage-label stage-${data.stage}`;
+      stageDiv.textContent = `[${data.stage}/3] ${data.name} — ${data.agents.join(', ')}`;
+      output.appendChild(stageDiv);
+
+      if (data.stage <= 2) {
+        const grid = document.createElement('div');
+        grid.className = 'agents';
+        grid.id = `stage-${data.stage}-agents`;
+        output.appendChild(grid);
+        data.agents.forEach(name => {
+          const panel = document.createElement('div');
+          panel.className = 'agent-panel streaming';
+          panel.innerHTML = `<div class="name">${name}</div><div class="content"></div>`;
+          grid.appendChild(panel);
+          agentPanels[name] = panel;
+        });
+      }
+      status.textContent = `Stage ${data.stage}: ${data.name}...`;
+      break;
+
+    case 'chunk':
+      const panel = agentPanels[data.agent];
+      if (panel) {
+        const content = panel.querySelector('.content');
+        content.textContent += data.text;
+        content.scrollTop = content.scrollHeight;
+      }
+      break;
+
+    case 'agent_done':
+      const donePanel = agentPanels[data.agent];
+      if (donePanel) {
+        donePanel.className = `agent-panel ${data.success ? 'done' : 'failed'}`;
+        const name = donePanel.querySelector('.name');
+        name.textContent += data.success ? ` (${data.elapsed.toFixed(1)}s)` : ' (failed)';
+      }
+      break;
+
+    case 'stage_done':
+      status.textContent = `Stage ${data.stage}: ${data.success}/${data.total} agents completed`;
+      break;
+
+    case 'synthesis':
+      const synthDiv = document.createElement('div');
+      synthDiv.className = 'synthesis-panel';
+      synthDiv.innerHTML = `<div class="name">Council Answer (Chairman: ${data.chairman || '?'})</div><div class="content">${escapeHtml(data.text)}</div>`;
+      output.appendChild(synthDiv);
+      break;
+
+    case 'stats':
+      const statsDiv = document.createElement('div');
+      statsDiv.className = 'stats';
+      statsDiv.innerHTML = `<span>Agents: <strong>${data.agents}</strong></span><span>Time: <strong>${data.time.toFixed(0)}s</strong></span>` +
+        (data.cost > 0 ? `<span>Cost: <strong>$${data.cost.toFixed(4)}</strong></span>` : '');
+      output.appendChild(statsDiv);
+      break;
+
+    case 'error':
+      status.textContent = `Error: ${data.message}`;
+      break;
+  }
+}
+
+function escapeHtml(text) {
+  const d = document.createElement('div');
+  d.textContent = text;
+  return d.innerHTML.replace(/\n/g, '<br>');
+}
+</script>
+</body>
+</html>

@@ -78,9 +78,14 @@ def run():
             continue
 
         if question.strip().lower() == "help":
-            console.print("  [dim]Commands: memory, sessions, models, publish, help, quit[/dim]")
+            console.print("  [dim]Commands: memory, sessions, models, publish, web, help, quit[/dim]")
             console.print("  [dim]Prefix with ! to skip clarification (e.g. !What is X?)[/dim]")
             console.print()
+            continue
+
+        if question.strip().lower() == "web":
+            from council.web import serve
+            serve()
             continue
 
         if question.strip().lower() == "sessions":

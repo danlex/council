@@ -1,13 +1,33 @@
 [project]
-name = "council"
-version = "0.1.0"
-description = "Council of LLM CLIs — query multiple AI coding agents and synthesize bias-free answers"
+name = "council-llm"
+version = "0.2.0"
+description = "Council of LLM CLIs — multi-agent deliberation without confirmation bias"
 readme = "README.md"
+license = {text = "MIT"}
 requires-python = ">=3.11"
+authors = [{name = "Adan"}]
+keywords = ["llm", "council", "multi-agent", "debate", "openrouter", "claude", "gpt", "gemini"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "rich>=13.0",
     "pyyaml>=6.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/danlex/council"
+Documentation = "https://danlex.github.io/council/"
+Repository = "https://github.com/danlex/council"
 
 [project.scripts]
 council = "council.cli:run"
@@ -18,3 +38,6 @@ include = ["council*"]
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
