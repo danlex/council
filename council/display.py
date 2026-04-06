@@ -112,8 +112,19 @@ class StreamingDisplay:
         """Stop the live display."""
         with self._lock:
             if self.live:
-                self.live.stop()
+                try:
+                    self.live.stop()
+                except Exception:
+                    pass
                 self.live = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Guarantee stop() runs even on exceptions."""
+        self.stop()
+        return False  # Don't suppress exceptions
 
     def _render(self):
         """Render the current state of all agents."""

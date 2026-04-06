@@ -39,32 +39,34 @@ def init_memory():
         )
 
 
-def load_memory() -> str:
-    """Load all memory content for injection into prompts.
+def load_memory(limit: int = 20) -> str:
+    """Load recent memory entries for injection into prompts.
 
-    Returns a formatted string with the memory index and recent entries.
+    Loads the N most-recently-modified memory files across all categories.
+    Does NOT load the index (MEMORY.md) to avoid duplicating content —
+    the index is just a navigational catalog, the files are the source.
+
+    Args:
+        limit: Maximum number of memory entries to load (default 20)
     """
-    if not MEMORY_INDEX.exists():
+    if not MEMORY_DIR.exists():
         return ""
 
-    parts = []
-
-    # Load index
-    index = MEMORY_INDEX.read_text().strip()
-    if index:
-        parts.append(index)
-
-    # Load recent memories from each subdirectory (last 20 total)
+    # Collect recent memories from each subdirectory (exclude sessions — too large)
     all_memories = []
     for sub in SUBDIRS:
+        if sub == "sessions":
+            continue  # Sessions are full transcripts, not meant for prompts
         subdir = MEMORY_DIR / sub
         if subdir.exists():
             for f in sorted(subdir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
                 all_memories.append((f.stat().st_mtime, sub, f))
 
-    # Sort by recency, take last 20
+    # Sort by recency, take most recent
     all_memories.sort(key=lambda x: x[0], reverse=True)
-    for _, category, filepath in all_memories[:20]:
+
+    parts = []
+    for _, category, filepath in all_memories[:limit]:
         content = filepath.read_text().strip()
         if content:
             parts.append(f"### [{category}] {filepath.stem}\n{content}")
@@ -133,18 +135,35 @@ def save_learning(learning: str, question: str, session_id: str) -> Path:
     return save_memory(content, category="learnings", title=question[:40])
 
 
+MAX_INDEX_ENTRIES = 100
+
+
 def _update_index(filepath: Path, category: str, title: str):
-    """Add an entry to MEMORY.md index."""
+    """Add an entry to MEMORY.md index, capped at MAX_INDEX_ENTRIES lines."""
     rel_path = filepath.relative_to(MEMORY_DIR)
     entry = f"- [{title}]({rel_path}) — {category}, {datetime.now().strftime('%Y-%m-%d')}\n"
 
+    header = (
+        "# Council Shared Memory\n\n"
+        "This file indexes all memories accumulated by the Council across sessions.\n\n"
+        "---\n\n"
+    )
+
     if MEMORY_INDEX.exists():
         current = MEMORY_INDEX.read_text()
+        # Extract existing entries (lines starting with "- [")
+        existing_entries = [
+            line for line in current.split("\n") if line.strip().startswith("- [")
+        ]
     else:
-        current = "# Council Shared Memory\n\n---\n\n"
+        existing_entries = []
 
-    # Append entry
-    MEMORY_INDEX.write_text(current + entry)
+    # Add new entry and cap to most recent MAX_INDEX_ENTRIES
+    all_entries = existing_entries + [entry.rstrip()]
+    if len(all_entries) > MAX_INDEX_ENTRIES:
+        all_entries = all_entries[-MAX_INDEX_ENTRIES:]
+
+    MEMORY_INDEX.write_text(header + "\n".join(all_entries) + "\n")
 
 
 def list_memories() -> list[dict]:

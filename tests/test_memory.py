@@ -1,20 +1,16 @@
 """Tests for council.memory."""
 
-import shutil
-from pathlib import Path
-
 import pytest
 
 import council.memory as mem
 
 
-@pytest.fixture(autouse=True)
-def isolated_memory(tmp_path, monkeypatch):
-    """Use a temp directory for all memory operations."""
-    memory_dir = tmp_path / "memory"
-    monkeypatch.setattr(mem, "MEMORY_DIR", memory_dir)
-    monkeypatch.setattr(mem, "MEMORY_INDEX", memory_dir / "MEMORY.md")
-    yield memory_dir
+# conftest.py's isolate_memory_dir fixture handles isolation automatically.
+# This alias preserves the old fixture name for existing test functions.
+@pytest.fixture
+def isolated_memory(isolate_memory_dir):
+    """Alias for the autouse conftest fixture."""
+    return isolate_memory_dir
 
 
 class TestInitMemory:

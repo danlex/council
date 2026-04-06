@@ -127,8 +127,13 @@ def _clarify(question: str, config: CouncilConfig, bridge: Bridge) -> str | None
     memory = load_memory()
     chairman = config.chairman_agent
 
+    agent_list = ", ".join(a.display_name for a in config.active_agents)
     memory_section = f"## Council Memory\n{memory}" if memory else ""
-    system = CLARIFY_SYSTEM.format(soul=soul, memory_section=memory_section)
+    system = CLARIFY_SYSTEM.format(
+        agent_list=agent_list,
+        soul=soul,
+        memory_section=memory_section,
+    )
 
     clarify_prompt = (
         f"{system}\n\n---\n\n"

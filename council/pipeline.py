@@ -99,34 +99,33 @@ class CouncilPipeline:
 
             if use_parallel and len(active_agents) > 1:
                 stream = StreamingDisplay()
-                stream.start(active_agents)
+                with stream:
+                    stream.start(active_agents)
+                    responses = []
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=len(active_agents)) as pool:
+                        def run_stage1(agent):
+                            return self.bridge.query_agent(
+                                agent, stage1_prompts[agent.name], run_id,
+                                on_chunk=lambda chunk, _n=agent.name: stream.update_chunk(_n, chunk),
+                            )
+                        futures = {pool.submit(run_stage1, a): a for a in active_agents}
+                        for future in concurrent.futures.as_completed(futures):
+                            responses.append(future.result())
 
-                responses = []
-                with concurrent.futures.ThreadPoolExecutor(max_workers=len(active_agents)) as pool:
-                    def run_stage1(agent):
-                        return self.bridge.query_agent(
-                            agent, stage1_prompts[agent.name], run_id,
-                            on_chunk=lambda chunk, _n=agent.name: stream.update_chunk(_n, chunk),
-                        )
-                    futures = {pool.submit(run_stage1, a): a for a in active_agents}
-                    for future in concurrent.futures.as_completed(futures):
-                        responses.append(future.result())
-
-                for r in responses:
-                    stream.mark_done(r.agent_name, r.elapsed_seconds, r.success)
-                stream.stop()
+                    for r in responses:
+                        stream.mark_done(r.agent_name, r.elapsed_seconds, r.success)
                 stream = None
             else:
                 responses = []
                 for agent in active_agents:
                     stream = StreamingDisplay()
-                    stream.start([agent])
-                    resp = self.bridge.query_agent(
-                        agent, stage1_prompts[agent.name], run_id,
-                        on_chunk=lambda chunk, _n=agent.name: stream.update_chunk(_n, chunk),
-                    )
-                    stream.mark_done(agent.name, resp.elapsed_seconds, resp.success)
-                    stream.stop()
+                    with stream:
+                        stream.start([agent])
+                        resp = self.bridge.query_agent(
+                            agent, stage1_prompts[agent.name], run_id,
+                            on_chunk=lambda chunk, _n=agent.name: stream.update_chunk(_n, chunk),
+                        )
+                        stream.mark_done(agent.name, resp.elapsed_seconds, resp.success)
                     stream = None
                     responses.append(resp)
                     print_agent_result(resp)
@@ -180,34 +179,32 @@ class CouncilPipeline:
             # Run reviews in parallel
             if len(review_tasks) > 1:
                 stream = StreamingDisplay()
-                stream.start([t[0] for t in review_tasks])
-
                 reviews = []
-                with concurrent.futures.ThreadPoolExecutor(max_workers=len(review_tasks)) as pool:
-                    def run_review(agent, prompt):
-                        return self.bridge.query_agent(
-                            agent, prompt, run_id,
-                            on_chunk=lambda chunk, _n=agent.name: stream.update_chunk(_n, chunk),
-                        )
-                    futures = {pool.submit(run_review, a, p): a for a, p in review_tasks}
-                    for future in concurrent.futures.as_completed(futures):
-                        rev = future.result()
-                        stream.mark_done(rev.agent_name, rev.elapsed_seconds, rev.success)
-                        reviews.append(rev)
-
-                stream.stop()
+                with stream:
+                    stream.start([t[0] for t in review_tasks])
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=len(review_tasks)) as pool:
+                        def run_review(agent, prompt):
+                            return self.bridge.query_agent(
+                                agent, prompt, run_id,
+                                on_chunk=lambda chunk, _n=agent.name: stream.update_chunk(_n, chunk),
+                            )
+                        futures = {pool.submit(run_review, a, p): a for a, p in review_tasks}
+                        for future in concurrent.futures.as_completed(futures):
+                            rev = future.result()
+                            stream.mark_done(rev.agent_name, rev.elapsed_seconds, rev.success)
+                            reviews.append(rev)
                 stream = None
             else:
                 reviews = []
                 for agent, prompt in review_tasks:
                     stream = StreamingDisplay()
-                    stream.start([agent])
-                    rev = self.bridge.query_agent(
-                        agent, prompt, run_id,
-                        on_chunk=lambda chunk, _n=agent.name: stream.update_chunk(_n, chunk),
-                    )
-                    stream.mark_done(agent.name, rev.elapsed_seconds, rev.success)
-                    stream.stop()
+                    with stream:
+                        stream.start([agent])
+                        rev = self.bridge.query_agent(
+                            agent, prompt, run_id,
+                            on_chunk=lambda chunk, _n=agent.name: stream.update_chunk(_n, chunk),
+                        )
+                        stream.mark_done(agent.name, rev.elapsed_seconds, rev.success)
                     stream = None
                     reviews.append(rev)
 
@@ -248,13 +245,13 @@ class CouncilPipeline:
             )
 
             stream = StreamingDisplay()
-            stream.start([chairman])
-            synthesis = self.bridge.query_agent(
-                chairman, stage3_prompt, run_id,
-                on_chunk=lambda chunk: stream.update_chunk(chairman.name, chunk),
-            )
-            stream.mark_done(chairman.name, synthesis.elapsed_seconds, synthesis.success)
-            stream.stop()
+            with stream:
+                stream.start([chairman])
+                synthesis = self.bridge.query_agent(
+                    chairman, stage3_prompt, run_id,
+                    on_chunk=lambda chunk: stream.update_chunk(chairman.name, chunk),
+                )
+                stream.mark_done(chairman.name, synthesis.elapsed_seconds, synthesis.success)
             stream = None
 
             result.stage3_synthesis = synthesis
@@ -273,6 +270,13 @@ class CouncilPipeline:
             if stream:
                 stream.stop()
             console.print("\n  [yellow]Council interrupted.[/yellow]")
+            result.errors.append("Interrupted by user")
+            self._save_session(result)
+        except Exception as e:
+            if stream:
+                stream.stop()
+            console.print(f"\n  [bold red]Pipeline error:[/bold red] {e}")
+            result.errors.append(f"Pipeline exception: {e}")
             self._save_session(result)
 
         return result

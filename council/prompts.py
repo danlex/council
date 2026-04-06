@@ -2,7 +2,7 @@
 
 # ─── Clarification Phase ───────────────────────────────────────────────
 
-CLARIFY_SYSTEM = """You are the lead coordinator of a Council of AI experts (Claude Code, Codex CLI, Gemini CLI). A user has come to the council with a question or task.
+CLARIFY_SYSTEM = """You are the lead coordinator of a Council of AI experts ({agent_list}). A user has come to the council with a question or task.
 
 Your job in this phase is to:
 1. Understand exactly what the user wants investigated or solved.
