@@ -18,9 +18,9 @@ DEFAULT_CONFIG = {
             "enabled": True,
             "type": "cli",
             "command": "claude",
-            "args": ["-p", "--max-turns", "10", "--output-format", "text"],
+            "args": ["-p", "--max-turns", "25", "--output-format", "text"],
             "display_name": "Claude Code",
-            "timeout": 300,
+            "timeout": 600,
         },
         "gpt": {
             "enabled": True,
