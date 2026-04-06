@@ -32,9 +32,10 @@ AGENT_COLORS = {
     "gpt": "bright_green",
     "codex": "bright_green",
     "gemini": "blue",
-    "glm": "red",
-    "minimax": "bright_yellow",
     "deepseek": "bright_cyan",
+    "llama": "bright_yellow",
+    "glm": "red",
+    "minimax": "yellow",
 }
 
 
