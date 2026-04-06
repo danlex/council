@@ -1,16 +1,32 @@
 # Council
 
-**Council of LLM CLIs** -- Multi-agent deliberation without confirmation bias.
+**Multi-agent deliberation without confirmation bias.**
 
-Council orchestrates multiple AI coding agents (Claude Code, OpenAI Codex CLI, Google Gemini CLI) through a structured protocol: clarify the question, get independent expert responses, conduct anonymized peer review, and synthesize the strongest reasoning into a final answer. It learns from every session.
+Council orchestrates 5 frontier LLMs — Claude, GPT, Gemini, DeepSeek, Llama — through a structured protocol: clarify the question, get independent expert responses, conduct anonymized peer review, and synthesize the strongest reasoning into a final answer. It learns from every session.
+
+**[Live Deliberations](https://danlex.github.io/council/)** | **[Research Paper](PAPER.md)** | **[GitHub](https://github.com/danlex/council)**
+
+---
 
 ## Why?
 
-A single AI has confirmation bias. Different AI models have *different* biases. Council surfaces disagreement across models and synthesizes the strongest reasoning -- not the average.
+A single AI has confirmation bias. Different AI models have *different* biases. Council surfaces genuine disagreement across models and synthesizes the strongest reasoning — not the average.
 
 - **Model diversity is the #1 factor** for reducing bias ([arXiv:2511.07784](https://arxiv.org/abs/2511.07784))
 - **Multi-model ensembles can perform 83% above the best single model** ([arXiv:2510.21513](https://arxiv.org/abs/2510.21513))
-- **Naive consensus voting is a trap** -- Council uses structured evaluation instead
+- **Naive consensus voting is a trap** — Council uses structured evaluation instead ([arXiv:2509.05396](https://arxiv.org/abs/2509.05396))
+
+## The Council
+
+| Agent | Provider | Architecture | Why it's here |
+|---|---|---|---|
+| **Claude Code** | Anthropic (CLI) | Dense transformer | Full agentic tools (chairman) |
+| **GPT-4.1** | OpenAI (OpenRouter) | Dense transformer | Broad knowledge, speed |
+| **Gemini 2.5 Pro** | Google (OpenRouter) | Multimodal | Different training distribution |
+| **DeepSeek V3** | DeepSeek (OpenRouter) | MoE | Chinese + English training data |
+| **Llama 4 Scout** | Meta (OpenRouter) | Open-weight | Open-source perspective |
+
+5 model families with different training data, architectures, and alignment approaches = maximally different blind spots.
 
 ## How It Works
 
@@ -18,131 +34,208 @@ A single AI has confirmation bias. Different AI models have *different* biases. 
 $ ./c
 
   COUNCIL   of LLM CLIs
-  Council: Claude Code  Codex CLI  Gemini CLI
-  Memory: 5 entries loaded
+  Council: Claude Code  GPT-4.1  Gemini 2.5 Pro  DeepSeek V3  Llama 4 Scout
+  Chairman: Claude Code
+  Memory: 3 entries loaded
 
   What do you want the council to investigate?
-  > Should we use Rust or Go for our new API service?
+  > Should we build AGI as fast as possible, or slow down?
 
   ┌── Claude Code (Chairman) ──────────────────────┐
   │ A few clarifications:                           │
-  │ 1. What kind of API? High-throughput? CRUD?     │
-  │ 2. Team size and existing expertise?            │
-  │ 3. Performance vs productivity priority?        │
+  │ 1. Whose perspective — humanity, labs, govts?   │
+  │ 2. What time horizon?                           │
+  │ 3. What does "slow down" mean concretely?       │
   └─────────────────────────────────────────────────┘
 
-  Your response (or 'go' to start):
-  > High-throughput, team of 5, performance matters most. Go.
+  Your response: > All perspectives. Go.
 
   ┌── Council Brief ───────────────────────────────┐
-  │ Compare Rust vs Go for high-throughput APIs...  │
+  │ Analyze AGI development pace from all angles... │
   └─────────────────────────────────────────────────┘
 
-  [1/3] Stage 1: Independent Responses
-  (Claude, Codex, Gemini respond in parallel with live streaming)
+  [1/3] Stage 1: Independent Responses     (5 agents in parallel, streaming)
+  [2/3] Stage 2: Anonymized Peer Review    (each reviews others, no self-review)
+  [3/3] Chairman Synthesis                 (preserves dissent, flags confidence)
 
-  [2/3] Stage 2: Anonymized Peer Review
-  (Each agent reviews all others -- identities hidden as Agent 1, 2, 3)
-
-  [3/3] Chairman Synthesis
-  ┌── Council Answer ──────────────────────────────┐
-  │ ### Consensus: Go for most teams                │
-  │ ### Dissent: Rust when compute costs dominate   │
-  │ ### Confidence: Medium-High                     │
+  ┌── Council Answer (Chairman: Claude Code) ──────┐
+  │ ### Consensus Points                            │
+  │ All agents agree safety research is essential...│
+  │                                                 │
+  │ ### Points of Dissent                           │
+  │ GPT emphasized competitive dynamics...          │
+  │ DeepSeek highlighted different cultural views... │
+  │ Gemini flagged regulatory capture risks...      │
+  │                                                 │
+  │ ### Confidence: Medium                          │
   └─────────────────────────────────────────────────┘
 
-  Memory saved: memory/learnings/20260404_rust_vs_go.md
+  Session saved: 20260406_111216.json
+  Memory saved: memory/learnings/agi_development_pace.md
 
   Any corrections or feedback? (enter to skip):
 ```
 
 ### The 4-Phase Flow
 
-1. **Clarify** -- Chairman agent asks questions to refine the scope
-2. **Respond** -- All agents answer independently and in parallel (with live streaming)
-3. **Review** -- Each agent peer-reviews all responses (anonymized as Agent 1, 2, 3)
-4. **Synthesize** -- Chairman combines the best reasoning, preserves dissent, flags confidence
+```
+Question + SOUL.md + Relevant Memories
+       │
+  ┌────┼────┬────┬────┐
+  v    v    v    v    v
+Claude GPT Gemini DS Llama     ← Phase 1: Independent Responses (parallel)
+  │    │    │    │    │
+  v    v    v    v    v
+  Anonymized Peer Review        ← Phase 2: Each reviews others (parallel)
+  (Agent 1,2,3,4,5)              (self-review excluded, SOUL enforced)
+       │
+       v
+  Chairman Synthesis            ← Phase 3: Best reasoning + dissent
+  (SOUL + memory injected)        (not consensus — dissent preserved)
+       │
+       v
+  Learn + Save                  ← Phase 4: Extract learnings to memory
+```
 
-Each CLI agent runs with its **full capabilities** (file I/O, shell, web search, tool use) -- not just raw API calls.
+### Anti-Bias Mechanisms
+
+| Mechanism | What it prevents | Source |
+|---|---|---|
+| **Anonymized review** | Models favoring their own output | Karpathy (2025) |
+| **No self-review** | Self-evaluation bias | Round 2 fix |
+| **SOUL.md in all stages** | Sycophancy, conformity | Council design |
+| **Preserve dissent** | Tyranny of majority | Wynn et al. (2025) |
+| **Structured rubrics** | Persuasion over truth | Du et al. (2023) |
+| **5 model families** | Correlated errors | Wang et al. (2024) |
+| **Memory relevance filter** | Prompt noise from unrelated memories | Round 4 |
+| **CLI vs API honest prompts** | API agents told to "use tools" they don't have | Round 3 |
 
 ## Install
 
 ```bash
 git clone https://github.com/danlex/council.git
 cd council
-
-# That's it -- ./c auto-creates the venv on first run
-./c
+echo 'OPENROUTER_API_KEY=your-key-here' > .env   # Get key at openrouter.ai/keys
+./c                                                # Auto-creates venv on first run
 ```
 
 ### Requirements
 
 - **Python 3.11+**
 - **tmux** (`brew install tmux`)
-- At least one CLI agent:
-  - `claude` -- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`)
-  - `codex` -- [Codex CLI](https://github.com/openai/codex) (`npm install -g @openai/codex`)
-  - `gemini` -- [Gemini CLI](https://github.com/google-gemini/gemini-cli) (`npm install -g @google/gemini-cli`)
+- **OpenRouter API key** ([openrouter.ai/keys](https://openrouter.ai/keys)) — one key for GPT, Gemini, DeepSeek, Llama
+- **Claude Code** (optional, for chairman CLI agent): `npm install -g @anthropic-ai/claude-code`
+
+Without Claude Code installed, the council uses the 4 API agents with GPT as chairman.
 
 ## Usage
 
-Just run `./c`. That's it. No subcommands, no flags.
+Just `./c`. No subcommands, no flags.
+
+### REPL Commands
+
+| Command | Description |
+|---|---|
+| *(your question)* | Start a council investigation |
+| `!your question` | Skip clarification — go straight to council |
+| `go` / `yes` / `y` | Confirm brief and start deliberation |
+| `cancel` | Cancel current investigation |
+| `memory` | View saved memories |
+| `sessions` | Browse past council sessions |
+| `models` | Show configured agents |
+| `eval` | Run benchmark: council vs single agents (5 questions) |
+| `publish` | Generate GitHub Pages from sessions |
+| `web` | Launch browser UI at localhost:8080 |
+| `help` | Show commands |
+| `quit` | Exit |
+
+### Web UI
+
+Type `web` in the REPL or run directly:
+
+```bash
+python3 -m council.web
+# Open http://localhost:8080
+```
+
+Live streaming interface — watch all agents respond in parallel in your browser.
+
+### MCP Server (Claude Code / Cursor)
+
+Use the council as a tool from Claude Code or Cursor:
+
+```json
+// .mcp.json or ~/.claude/settings.json
+{
+  "mcpServers": {
+    "council": {
+      "command": "/path/to/council/.venv/bin/python3",
+      "args": ["-m", "council.mcp_server"]
+    }
+  }
+}
+```
+
+Exposes two tools: `council_ask` (full deliberation) and `council_memory` (view learnings).
+
+### Evaluation
+
+Run the benchmark to compare council vs individual agents:
 
 ```bash
 ./c
+> eval
 ```
 
-### In-session commands
-
-| Command | Description |
-|---------|-------------|
-| *(your question)* | Start a council investigation |
-| `go` / `yes` / `y` | Confirm and start the council after clarification |
-| `cancel` | Cancel current investigation |
-| `memory` | View saved memories |
-| `models` | Show configured agents |
-| `quit` / `exit` | End the session |
-
-### After each council session
-
-The council automatically:
-1. **Extracts learnings** from the synthesis and saves to `memory/learnings/`
-2. **Asks for feedback** -- your corrections are saved to `memory/corrections/`
-3. **Loads all memories** into the next session, so the council gets smarter over time
+Runs 5 questions across categories (contested, reasoning, factual, values, technical). Each agent answers individually, then the full council runs. A judge scores accuracy, completeness, nuance, and bias resistance (1-10). Results show whether the council actually outperforms single models.
 
 ## Architecture
 
-### SOUL.md -- Shared Anti-Bias Protocol
+### Hybrid CLI + API Bridge
 
-All agents receive a shared `SOUL.md` that instructs them to:
-- Prioritize **evidence over agreement**
-- Quantify **uncertainty explicitly**
-- Resist **sycophancy and conformity**
-- Treat **disagreement as valuable signal**
-- Ask "what would a smart person who disagrees say?"
+```
+Claude Code ──── subprocess (Popen) ──── Full agentic: files, shell, web
+GPT-4.1    ──── OpenRouter SSE API ──── Fast, streaming, cost-tracked
+Gemini 2.5 ──── OpenRouter SSE API ──── Different training distribution
+DeepSeek V3 ─── OpenRouter SSE API ──── Chinese + English perspective
+Llama 4    ──── OpenRouter SSE API ──── Open-weight perspective
+```
 
-### memory/ -- Persistent Shared Memory
+- **CLI agents** (Claude) keep full tool-use capabilities
+- **API agents** use OpenRouter's streaming SSE with retry + backoff
+- **Parallel execution** via `ThreadPoolExecutor` with thread-safe streaming display
+- **Cost tracking** from OpenRouter usage data, shown per-session
+
+### SOUL.md — Shared Anti-Bias Protocol
+
+All agents in all stages receive `SOUL.md`:
+
+```markdown
+Core Principles:
+1. Intellectual honesty over agreement
+2. Evidence over eloquence
+3. Uncertainty is information — quantify it
+4. No sycophancy — disagree when you should
+5. If all responses agree, be suspicious
+```
+
+### Persistent Shared Memory
 
 ```
 memory/
-├── MEMORY.md           # Index of all memories
-├── learnings/          # Key insights from council sessions
-├── corrections/        # User feedback and corrections
+├── MEMORY.md           # Index (capped at 100 entries)
+├── learnings/          # Key insights from sessions
+├── corrections/        # User feedback
 ├── context/            # Domain knowledge
+├── sessions/           # Full JSON transcripts
+├── evals/              # Benchmark results
 └── preferences/        # User preferences
 ```
 
-Memories are loaded into every agent's prompt, so the council learns from past sessions. The memory system is inspired by Claude Code's own memory architecture.
-
-### Key Design Decisions (from research)
-
-| Decision | Why |
-|----------|-----|
-| **Anonymized review** | Prevents models from recognizing and favoring their own responses |
-| **Diverse model families** | Different training data, architectures, and alignment = different blind spots |
-| **Preserve dissent** | Forcing consensus destroys the signal -- disagreements are the most valuable output |
-| **Structured rubrics** | Open debate lets persuasive-but-wrong arguments win; rubrics enforce evidence evaluation |
-| **CLI bridge, not API** | Each agent keeps its full tool-use capabilities (web search, file I/O, shell) |
+- **Relevance-filtered**: only memories matching the current question are loaded
+- **Keyword extraction**: stop words removed, scored by overlap
+- **Session transcripts**: full JSON with all responses, reviews, synthesis, costs
+- **Learning extraction**: chairman distills key insights after each session
 
 ## Configuration
 
@@ -151,39 +244,75 @@ Memories are loaded into every agent's prompt, so the council learns from past s
 agents:
   claude:
     enabled: true
+    type: cli
     command: claude
     args: ["-p", "--max-turns", "10", "--output-format", "text"]
     display_name: Claude Code
     timeout: 300
-  codex:
+  gpt:
     enabled: true
-    command: codex
-    args: ["exec", "--skip-git-repo-check"]
-    display_name: Codex CLI
-    timeout: 300
+    type: openrouter
+    model: openai/gpt-4.1
+    display_name: GPT-4.1
+    timeout: 120
   gemini:
     enabled: true
-    command: gemini
-    args: ["-p", "{prompt}"]  # {prompt} is replaced with the actual prompt
-    display_name: Gemini CLI
-    timeout: 300
+    type: openrouter
+    model: google/gemini-2.5-pro-preview
+    display_name: Gemini 2.5 Pro
+    timeout: 120
+  deepseek:
+    enabled: true
+    type: openrouter
+    model: deepseek/deepseek-chat-v3-0324
+    display_name: DeepSeek V3
+    timeout: 120
+  llama:
+    enabled: true
+    type: openrouter
+    model: meta-llama/llama-4-scout
+    display_name: Llama 4 Scout
+    timeout: 120
 
 chairman: claude
 soul_file: SOUL.md
 ```
 
-To add a new agent (e.g., Aider, Cline, GLM), add an entry to the agents section with the appropriate command and args for non-interactive mode.
+Add any model from [OpenRouter's catalog](https://openrouter.ai/models) with just a config entry.
+
+## Project Quality
+
+- **127 automated tests** covering config, bridge, memory, prompts, pipeline, display
+- **4 rounds of code review** — 42 issues found and fixed
+- **Thread-safe** streaming display with `threading.Lock`
+- **Ctrl-C handling** with clean terminal cleanup
+- **Session transcripts** saved automatically
+- **No test pollution** — tests isolated from real memory via `conftest.py`
 
 ## Research
 
-See [PAPER.md](PAPER.md) for the full research paper with literature review, architecture analysis, and 15 references.
+See [PAPER.md](PAPER.md) for the full research paper (15 references).
 
-Key findings:
-- Du et al. (2023) -- Multi-agent debate improves factuality (ICML 2024)
-- Wang et al. (2024) -- Mixture-of-Agents surpasses GPT-4o with open-source models
-- Wynn et al. (2025) -- Failure modes of naive debate (echo chambers, sycophancy)
-- Karpathy (2025) -- LLM Council: anonymized peer review as the key mechanism
-- Vallecillos-Ruiz et al. (2025) -- "Popularity trap" in consensus voting
+Key findings from the literature:
+
+| Paper | Finding |
+|---|---|
+| Du et al. (ICML 2024) | Multi-agent debate improves factuality and reasoning |
+| Wang et al. (2024) | Mixture-of-Agents surpasses GPT-4o with open-source models |
+| Wynn et al. (ICML 2025) | Naive debate can backfire — echo chambers, sycophancy |
+| Karpathy (2025) | Anonymized peer review prevents favoritism |
+| Vallecillos-Ruiz et al. (2025) | Consensus voting falls into "popularity trap" |
+| Kim & Torr (2025) | Confirmation bias is worse in multi-agent debate without safeguards |
+
+## Example: AGI Development Pace
+
+The council's first public deliberation asked: *"Should we build AGI as fast as possible, or slow down?"*
+
+- **3 agents** responded independently (GPT-4.1, Gemini 2.5 Pro, Claude Code)
+- **3 peer reviews** conducted anonymously
+- **Chairman synthesis** preserved genuine disagreements
+- **Key dissent**: agents disagreed on whether competitive dynamics justify speed
+- **Full transcript**: [danlex.github.io/council](https://danlex.github.io/council/)
 
 ## License
 
