@@ -39,42 +39,83 @@ def init_memory():
         )
 
 
-def load_memory(limit: int = 20) -> str:
-    """Load recent memory entries for injection into prompts.
+def load_memory(limit: int = 20, query: str = "") -> str:
+    """Load memory entries for injection into prompts.
 
-    Loads the N most-recently-modified memory files across all categories.
-    Does NOT load the index (MEMORY.md) to avoid duplicating content —
-    the index is just a navigational catalog, the files are the source.
+    If a query is provided, filters by keyword relevance — only memories
+    whose filename or content share words with the query are included.
+    Without a query, loads the N most recent entries.
 
     Args:
         limit: Maximum number of memory entries to load (default 20)
+        query: Optional question/topic to filter by relevance
     """
     if not MEMORY_DIR.exists():
         return ""
 
-    # Collect recent memories from each subdirectory (exclude sessions — too large)
+    # Collect memories from each subdirectory (exclude sessions — too large)
     all_memories = []
     for sub in SUBDIRS:
         if sub == "sessions":
-            continue  # Sessions are full transcripts, not meant for prompts
+            continue
         subdir = MEMORY_DIR / sub
         if subdir.exists():
             for f in sorted(subdir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
                 all_memories.append((f.stat().st_mtime, sub, f))
 
-    # Sort by recency, take most recent
     all_memories.sort(key=lambda x: x[0], reverse=True)
 
-    parts = []
-    for _, category, filepath in all_memories[:limit]:
-        content = filepath.read_text().strip()
-        if content:
+    if query:
+        # Keyword relevance filtering
+        query_words = _extract_keywords(query)
+        scored = []
+        for mtime, category, filepath in all_memories:
+            content = filepath.read_text().strip()
+            if not content:
+                continue
+            # Score = number of query keywords found in filename + content
+            text = (filepath.stem + " " + content).lower()
+            score = sum(1 for w in query_words if w in text)
+            if score > 0:
+                scored.append((score, mtime, category, filepath, content))
+
+        # Sort by relevance (score desc), then recency (mtime desc)
+        scored.sort(key=lambda x: (-x[0], -x[1]))
+        parts = []
+        for score, _, category, filepath, content in scored[:limit]:
             parts.append(f"### [{category}] {filepath.stem}\n{content}")
+    else:
+        # No query — load most recent
+        parts = []
+        for _, category, filepath in all_memories[:limit]:
+            content = filepath.read_text().strip()
+            if content:
+                parts.append(f"### [{category}] {filepath.stem}\n{content}")
 
     if not parts:
         return ""
 
     return "\n\n---\n\n".join(parts)
+
+
+def _extract_keywords(text: str) -> set[str]:
+    """Extract meaningful keywords from text for relevance matching."""
+    # Common stop words to skip
+    stop = {
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+        "have", "has", "had", "do", "does", "did", "will", "would", "could",
+        "should", "may", "might", "shall", "can", "to", "of", "in", "for",
+        "on", "with", "at", "by", "from", "as", "into", "through", "during",
+        "before", "after", "above", "below", "between", "and", "but", "or",
+        "nor", "not", "no", "so", "if", "then", "than", "that", "this",
+        "these", "those", "it", "its", "what", "which", "who", "whom",
+        "how", "when", "where", "why", "all", "each", "every", "both",
+        "few", "more", "most", "other", "some", "such", "only", "own",
+        "same", "very", "just", "about", "also", "we", "you", "they",
+        "i", "me", "my", "your", "our", "us", "him", "her", "them",
+    }
+    words = set(re.sub(r"[^a-z0-9\s]", "", text.lower()).split())
+    return {w for w in words if w not in stop and len(w) > 2}
 
 
 def save_memory(

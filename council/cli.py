@@ -77,8 +77,13 @@ def run():
             _show_models(config)
             continue
 
+        if question.strip().lower() == "eval":
+            from council.eval import run_eval
+            run_eval()
+            continue
+
         if question.strip().lower() == "help":
-            console.print("  [dim]Commands: memory, sessions, models, publish, web, help, quit[/dim]")
+            console.print("  [dim]Commands: memory, sessions, models, publish, web, eval, help, quit[/dim]")
             console.print("  [dim]Prefix with ! to skip clarification (e.g. !What is X?)[/dim]")
             console.print()
             continue
@@ -138,7 +143,7 @@ def _clarify(question: str, config: CouncilConfig, bridge: Bridge) -> str | None
     Returns the refined brief, or None if cancelled.
     """
     soul = config.soul
-    memory = load_memory()
+    memory = load_memory(query=question)
     chairman = config.chairman_agent
 
     agent_list = ", ".join(a.display_name for a in config.active_agents)

@@ -135,7 +135,7 @@ def _run_council(question: str) -> str:
         return "No active agents configured."
 
     init_memory()
-    memory = load_memory()
+    memory = load_memory(query=question)
     soul = config.soul
 
     # Stage 1: Parallel responses

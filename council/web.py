@@ -131,7 +131,7 @@ def _run_council(run_id: str, question: str):
         q.put({"type": event_type, **data})
 
     init_memory()
-    memory = load_memory()
+    memory = load_memory(query=question)
     soul = config.soul
 
     try:

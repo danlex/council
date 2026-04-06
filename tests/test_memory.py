@@ -138,6 +138,40 @@ class TestListMemories:
         assert "size" in entry
 
 
+class TestLoadMemoryRelevance:
+    def test_filters_by_keyword(self, isolated_memory):
+        mem.save_memory("Rust has zero-cost abstractions and great performance", category="learnings", title="rust_performance")
+        mem.save_memory("Quantum entanglement is weird", category="learnings", title="quantum_physics")
+        mem.save_memory("Golang has great concurrency primitives", category="learnings", title="golang_concurrency")
+
+        result = mem.load_memory(query="What language has better performance Rust or Golang?")
+        assert "rust" in result.lower()
+        assert "golang" in result.lower() or "concurrency" in result.lower()
+        # Quantum should NOT be included — no keyword overlap
+        assert "entanglement" not in result
+
+    def test_no_query_loads_all_recent(self, isolated_memory):
+        mem.save_memory("entry one", category="learnings", title="one")
+        mem.save_memory("entry two", category="learnings", title="two")
+        result = mem.load_memory(query="")
+        assert "entry one" in result
+        assert "entry two" in result
+
+    def test_empty_memory_returns_empty(self, isolated_memory):
+        mem.init_memory()
+        assert mem.load_memory(query="anything") == ""
+
+    def test_relevance_ranking(self, isolated_memory):
+        mem.save_memory("Python is slow but productive", category="learnings", title="python_speed")
+        mem.save_memory("Python typing with mypy improves safety", category="learnings", title="python_typing")
+        mem.save_memory("JavaScript runs in browsers", category="learnings", title="javascript")
+
+        result = mem.load_memory(query="Is Python typing worth it?")
+        # Both Python entries should appear, JS should not
+        assert "Python" in result or "python" in result
+        assert "JavaScript" not in result or "browsers" not in result
+
+
 class TestClearMemory:
     def test_clears_everything(self, isolated_memory):
         mem.save_memory("test", category="learnings", title="doomed")

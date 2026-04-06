@@ -80,7 +80,7 @@ class CouncilPipeline:
 
         # Load shared memory and soul
         init_memory()
-        memory = load_memory()
+        memory = load_memory(query=question)
         soul = self.config.soul
         memory_count = len(list_memories())
         print_memory_status(memory_count)
