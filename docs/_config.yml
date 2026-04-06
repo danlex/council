@@ -1,0 +1,18 @@
+title: Council of LLMs
+description: Public deliberations from a multi-agent AI council — Claude, GPT, Gemini debating hard questions without confirmation bias.
+url: "https://danlex.github.io"
+baseurl: "/council"
+theme: minima
+
+collections:
+  sessions:
+    output: true
+    sort_by: date
+    order: reverse
+
+defaults:
+  - scope:
+      path: ""
+      type: "sessions"
+    values:
+      layout: "session"

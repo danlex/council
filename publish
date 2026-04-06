@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Publish council sessions to GitHub Pages
+set -e
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/.venv/bin/activate" 2>/dev/null
+cd "$SCRIPT_DIR"
+
+if [ "$1" = "--latest" ]; then
+    python3 -m council.publish --latest
+else
+    python3 -m council.publish
+fi

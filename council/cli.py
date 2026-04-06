@@ -10,7 +10,7 @@ from rich.rule import Rule
 from council.config import load_config, CouncilConfig
 from council.bridge import Bridge
 from council.pipeline import CouncilPipeline
-from council.memory import init_memory, load_memory, save_correction, list_memories
+from council.memory import init_memory, load_memory, save_correction, list_memories, MEMORY_DIR
 from council.display import (
     console,
     print_banner,
@@ -78,9 +78,18 @@ def run():
             continue
 
         if question.strip().lower() == "help":
-            console.print("  [dim]Commands: memory, models, help, quit[/dim]")
+            console.print("  [dim]Commands: memory, sessions, models, publish, help, quit[/dim]")
             console.print("  [dim]Prefix with ! to skip clarification (e.g. !What is X?)[/dim]")
             console.print()
+            continue
+
+        if question.strip().lower() == "sessions":
+            _show_sessions()
+            continue
+
+        if question.strip().lower() == "publish":
+            from council.publish import publish_all
+            publish_all()
             continue
 
         # ─── Clarification Phase ────────────────
@@ -262,6 +271,36 @@ def _show_models(config: CouncilConfig):
         else:
             via = f"[dim]via CLI ({agent.command})[/dim]"
         console.print(f"  [{color}]{agent.display_name}[/{color}] {status}{role} {via}")
+    console.print()
+
+
+def _show_sessions():
+    import json
+    sessions_dir = MEMORY_DIR / "sessions"
+    if not sessions_dir.exists():
+        console.print("  [dim]No sessions yet.[/dim]")
+        return
+
+    files = sorted(sessions_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not files:
+        console.print("  [dim]No sessions yet.[/dim]")
+        return
+
+    console.print(f"\n  [bold]Past Sessions ({len(files)})[/bold]\n")
+    for i, f in enumerate(files[:15]):
+        try:
+            data = json.loads(f.read_text())
+            q = data.get("question", "?")[:70]
+            ts = data.get("timestamp", "")[:10]
+            agents = len([r for r in data.get("stage1", []) if r.get("success")])
+            cost = sum(r.get("cost_usd", 0) for r in data.get("stage1", []))
+            cost += sum(r.get("cost_usd", 0) for r in data.get("stage2", []))
+            if data.get("stage3"):
+                cost += data["stage3"].get("cost_usd", 0)
+            cost_str = f"${cost:.4f}" if cost > 0 else ""
+            console.print(f"  [dim]{ts}[/dim] {q} [dim]({agents} agents{', ' + cost_str if cost_str else ''})[/dim]")
+        except Exception:
+            continue
     console.print()
 
 

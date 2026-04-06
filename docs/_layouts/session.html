@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ page.title }} — Council of LLMs</title>
+  <style>
+    :root { --bg: #0d1117; --fg: #e6edf3; --dim: #7d8590; --border: #30363d; --panel: #161b22; --green: #3fb950; --yellow: #d29922; --red: #f85149; --blue: #58a6ff; --purple: #bc8cff; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--fg); max-width: 900px; margin: 0 auto; padding: 2rem; line-height: 1.6; }
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    h1 { border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; }
+    h2 { color: var(--blue); margin-top: 2rem; }
+    h3 { color: var(--purple); }
+    .meta { color: var(--dim); font-size: 0.9rem; margin-bottom: 2rem; }
+    .stage { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; margin: 1rem 0; }
+    .stage-header { font-size: 0.85rem; color: var(--dim); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+    .agent { border-left: 3px solid var(--border); padding-left: 1rem; margin: 1rem 0; }
+    .agent-claude { border-color: var(--purple); }
+    .agent-gpt { border-color: var(--green); }
+    .agent-gemini { border-color: var(--blue); }
+    .agent-name { font-weight: 600; font-size: 0.9rem; }
+    .agent-name.claude { color: var(--purple); }
+    .agent-name.gpt { color: var(--green); }
+    .agent-name.gemini { color: var(--blue); }
+    .synthesis { background: var(--panel); border: 2px solid var(--green); border-radius: 8px; padding: 1.5rem; margin: 2rem 0; }
+    .stats { display: flex; gap: 2rem; flex-wrap: wrap; margin: 1rem 0; }
+    .stat { font-size: 0.85rem; color: var(--dim); }
+    .stat strong { color: var(--fg); }
+    .back { margin-top: 2rem; font-size: 0.9rem; }
+    code { background: var(--panel); padding: 0.15em 0.4em; border-radius: 3px; font-size: 0.9em; }
+    pre { background: var(--panel); padding: 1rem; border-radius: 6px; overflow-x: auto; }
+    blockquote { border-left: 3px solid var(--border); padding-left: 1rem; color: var(--dim); }
+  </style>
+</head>
+<body>
+  <p class="back"><a href="{{ site.baseurl }}/">&larr; All Deliberations</a></p>
+
+  <h1>{{ page.title }}</h1>
+  <div class="meta">
+    {{ page.date | date: "%B %d, %Y" }} &middot; {{ page.agents | join: ", " }} &middot; {{ page.duration }}
+    {% if page.cost %} &middot; Cost: {{ page.cost }}{% endif %}
+  </div>
+
+  {{ content }}
+
+  <p class="back"><a href="{{ site.baseurl }}/">&larr; All Deliberations</a></p>
+</body>
+</html>
