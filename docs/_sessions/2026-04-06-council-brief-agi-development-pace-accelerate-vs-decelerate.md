@@ -4,7 +4,7 @@ title: "**COUNCIL BRIEF — AGI Development Pace: Accelerate vs. Decelerate**
 
 Analyze the..."
 date: 2026-04-06
-agents: ['Gemini 2.5 Pro', 'Claude Code', 'GPT-4.1']
+agents: ['Claude Code', 'GPT-4.1', 'Gemini 2.5 Pro']
 duration: "397s"
 cost: "$0.1114"
 run_id: "f4dd9107"
